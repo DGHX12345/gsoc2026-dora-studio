@@ -5,8 +5,9 @@ debugging DORA applications.
 
 ## Student
 
-- handle: TBD-fill-in
-- weekly_slot: TBD-fill-in (e.g. "Tuesdays 09:00 PT")
+- handle: DGHX12345
+- weekly_slot: Sundays 18:30-19:00 America/Los_Angeles
+- student_fork: https://github.com/DGHX12345/gsoc2026-dora-studio
 
 ## Mentor
 
