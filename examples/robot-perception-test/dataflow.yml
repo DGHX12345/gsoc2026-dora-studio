@@ -1,0 +1,39 @@
+nodes:
+  - id: camera
+    path: camera.py
+    inputs:
+      tick: dora/timer/millis/500
+    outputs:
+      - frame
+
+  - id: detector
+    path: detector.py
+    inputs:
+      frame: camera/frame
+    outputs:
+      - boxes
+      - debug_image
+
+  - id: planner
+    path: planner.py
+    inputs:
+      boxes: detector/boxes
+    outputs:
+      - cmd_vel
+
+  - id: logger
+    path: logger.py
+    inputs:
+      frame: camera/frame
+      boxes: detector/boxes
+      cmd_vel: planner/cmd_vel
+    outputs:
+      - dataset_chunk
+
+  - id: robot_bridge
+    path: robot_bridge.py
+    inputs:
+      cmd_vel: planner/cmd_vel
+
+_unstable_debug:
+  enable_debug_inspection: true

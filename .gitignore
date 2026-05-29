@@ -1,0 +1,9 @@
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+backend/target/
+__pycache__/
+*.pyc
+dataflow-graph.html
+*.log
+.DS_Store
