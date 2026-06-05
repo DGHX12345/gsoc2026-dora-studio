@@ -46,9 +46,14 @@ pub struct NodeMetrics {
 #[serde(rename_all = "camelCase")]
 pub struct LogEntry {
     pub time: String,
+    pub timestamp: String,
     pub node: String,
     pub level: String,
     pub message: String,
+    pub raw_message: String,
+    pub source: String,
+    pub source_file: Option<String>,
+    pub source_line: Option<String>,
 }
 
 #[derive(Serialize)]

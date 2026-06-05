@@ -24,11 +24,7 @@
           <strong>{{ groupedLogs.info.length }}</strong>
         </div>
         <div class="log-list">
-          <div v-for="log in previewLogs.info" :key="`${log.time}-${log.node}-${log.message}`" class="level-log-line info">
-            <time>{{ log.time }}</time>
-            <strong>{{ log.node }}</strong>
-            <p>{{ log.message }}</p>
-          </div>
+          <LogLine v-for="log in previewLogs.info" :key="logKey(log)" :log="log" variant="level" />
         </div>
         <button v-if="groupedLogs.info.length > previewLimit" class="view-all-button info" @click="openLogModal('info')">
           查看全部日志
@@ -45,11 +41,7 @@
           <strong>{{ groupedLogs.warn.length }}</strong>
         </div>
         <div class="log-list">
-          <div v-for="log in previewLogs.warn" :key="`${log.time}-${log.node}-${log.message}`" class="level-log-line warn">
-            <time>{{ log.time }}</time>
-            <strong>{{ log.node }}</strong>
-            <p>{{ log.message }}</p>
-          </div>
+          <LogLine v-for="log in previewLogs.warn" :key="logKey(log)" :log="log" variant="level" />
         </div>
         <button v-if="groupedLogs.warn.length > previewLimit" class="view-all-button warn" @click="openLogModal('warn')">
           查看全部日志
@@ -66,11 +58,7 @@
           <strong>{{ groupedLogs.error.length }}</strong>
         </div>
         <div class="log-list">
-          <div v-for="log in previewLogs.error" :key="`${log.time}-${log.node}-${log.message}`" class="level-log-line error">
-            <time>{{ log.time }}</time>
-            <strong>{{ log.node }}</strong>
-            <p>{{ log.message }}</p>
-          </div>
+          <LogLine v-for="log in previewLogs.error" :key="logKey(log)" :log="log" variant="level" />
         </div>
         <button v-if="groupedLogs.error.length > previewLimit" class="view-all-button error" @click="openLogModal('error')">
           查看全部日志
@@ -83,12 +71,7 @@
         <h2>原始合并流</h2>
         <button v-if="logs.length > previewLimit" class="terminal-view-all" @click="openLogModal('all')">查看全部日志</button>
       </div>
-      <div v-for="log in previewAllLogs" :key="`${log.time}-${log.node}-${log.message}`" :class="['log-line', log.level]">
-        <time>{{ log.time }}</time>
-        <span>{{ levelText[log.level] }}</span>
-        <strong>{{ log.node }}</strong>
-        <p>{{ log.message }}</p>
-      </div>
+      <LogLine v-for="log in previewAllLogs" :key="logKey(log)" :log="log" variant="terminal" />
     </article>
 
     <Teleport to="body">
@@ -103,12 +86,7 @@
             <button class="secondary" @click="closeLogModal">关闭</button>
           </div>
           <div class="log-modal-list">
-            <div v-for="log in modalLogs" :key="`${log.time}-${log.node}-${log.message}`" :class="['log-line', log.level]">
-              <time>{{ log.time }}</time>
-              <span>{{ levelText[log.level] }}</span>
-              <strong>{{ log.node }}</strong>
-              <p>{{ log.message }}</p>
-            </div>
+            <LogLine v-for="log in modalLogs" :key="logKey(log)" :log="log" variant="terminal" />
           </div>
         </section>
       </div>
@@ -142,7 +120,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, defineComponent, h, onMounted, onUnmounted, ref, type PropType } from 'vue'
 import { getRuntimeLogs, type ApiSource } from '../api'
 import { logs as fallbackLogs, type LogLevel, type StudioLog } from '../data/mockStudio'
 
@@ -159,6 +137,43 @@ const levelText: Record<LogLevel, string> = {
   warn: '警告',
   error: '错误',
 }
+
+const LogLine = defineComponent({
+  props: {
+    log: {
+      type: Object as PropType<StudioLog>,
+      required: true,
+    },
+    variant: {
+      type: String as PropType<'level' | 'terminal'>,
+      required: true,
+    },
+  },
+  setup(props) {
+    return () => {
+      const log = props.log
+      const sourceLocation = [log.sourceFile, log.sourceLine].filter(Boolean).join(':')
+      const metadata = [log.source, sourceLocation].filter(Boolean).join(' / ')
+
+      if (props.variant === 'level') {
+        return h('div', { class: ['level-log-line', log.level], title: log.rawMessage }, [
+          h('time', { datetime: log.timestamp }, log.time),
+          h('strong', log.node),
+          h('p', log.message),
+          h('small', metadata),
+        ])
+      }
+
+      return h('div', { class: ['log-line', log.level], title: log.rawMessage }, [
+        h('time', { datetime: log.timestamp }, log.time),
+        h('span', levelText[log.level]),
+        h('strong', log.node),
+        h('p', log.message),
+        h('small', metadata),
+      ])
+    }
+  },
+})
 
 const groupedLogs = computed<Record<LogLevel, StudioLog[]>>(() => ({
   info: logs.value.filter((log) => log.level === 'info'),
@@ -185,6 +200,10 @@ let refreshTimer: number | undefined
 
 function latest(items: StudioLog[]) {
   return items.slice(-previewLimit).reverse()
+}
+
+function logKey(log: StudioLog) {
+  return `${log.timestamp}-${log.node}-${log.rawMessage}`
 }
 
 function openLogModal(type: ModalType) {

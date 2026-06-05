@@ -26,7 +26,8 @@ async fn main() {
         .with_state(runtime)
         .layer(CorsLayer::permissive());
 
-    let bind_addr = std::env::var("DORA_STUDIO_BACKEND_ADDR").unwrap_or_else(|_| "127.0.0.1:3001".to_string());
+    let bind_addr =
+        std::env::var("DORA_STUDIO_BACKEND_ADDR").unwrap_or_else(|_| "127.0.0.1:3001".to_string());
     let addr = bind_addr.parse().expect("valid bind address");
     println!("dora-studio backend listening on http://{addr}");
 
@@ -61,15 +62,21 @@ async fn dataflow_graph(Path(_id): Path<String>) -> Json<models::DataflowGraph> 
     Json(mock::graph())
 }
 
-async fn runtime_status(State(runtime): State<runtime::RuntimeHandle>) -> Json<models::RuntimeState> {
+async fn runtime_status(
+    State(runtime): State<runtime::RuntimeHandle>,
+) -> Json<models::RuntimeState> {
     Json(runtime.status().await)
 }
 
-async fn runtime_logs(State(runtime): State<runtime::RuntimeHandle>) -> Json<Vec<models::LogEntry>> {
+async fn runtime_logs(
+    State(runtime): State<runtime::RuntimeHandle>,
+) -> Json<Vec<models::LogEntry>> {
     Json(runtime.logs().await)
 }
 
-async fn runtime_start(State(runtime): State<runtime::RuntimeHandle>) -> Json<models::RuntimeState> {
+async fn runtime_start(
+    State(runtime): State<runtime::RuntimeHandle>,
+) -> Json<models::RuntimeState> {
     Json(runtime.start().await)
 }
 

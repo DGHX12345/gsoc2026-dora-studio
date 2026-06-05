@@ -659,7 +659,7 @@ td span {
   border-radius: 10px;
   display: grid;
   gap: 12px;
-  grid-template-columns: 96px 72px 150px 1fr;
+  grid-template-columns: 96px 72px minmax(110px, 150px) minmax(0, 1fr) minmax(120px, 180px);
   padding: 14px 16px;
 }
 
@@ -690,6 +690,14 @@ td span {
 
 .log-line p {
   margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.log-line small,
+.level-log-line small {
+  color: #93a4bf;
+  font-size: 12px;
+  overflow-wrap: anywhere;
 }
 
 .hook-list {
@@ -803,7 +811,7 @@ td span {
   border-radius: 18px;
   display: grid;
   gap: 6px;
-  grid-template-columns: 80px 1fr;
+  grid-template-columns: 80px minmax(0, 1fr);
   padding: 14px;
 }
 
@@ -822,6 +830,7 @@ td span {
   color: #3e4d64;
   line-height: 1.5;
   margin: 0;
+  overflow-wrap: anywhere;
 }
 
 .level-log-line.info {

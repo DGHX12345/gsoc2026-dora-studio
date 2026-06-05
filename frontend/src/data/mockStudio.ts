@@ -26,9 +26,14 @@ export type StudioEdge = {
 
 export type StudioLog = {
   time: string
+  timestamp: string
   node: string
   level: LogLevel
   message: string
+  rawMessage: string
+  source: string
+  sourceFile: string | null
+  sourceLine: string | null
 }
 
 export type DiagnosticSeverity = 'info' | 'warning' | 'error'
@@ -149,9 +154,59 @@ export const diagnostics: StudioDiagnostic[] = [
 ]
 
 export const logs: StudioLog[] = [
-  { time: '10:21:03', node: 'camera', level: 'info', message: '已发布第 1842 帧，频率 30hz' },
-  { time: '10:21:04', node: 'detector', level: 'warn', message: '输入队列达到 18 条 pending message' },
-  { time: '10:21:05', node: 'planner', level: 'info', message: '根据 3 个检测结果生成 cmd_vel' },
-  { time: '10:21:06', node: 'robot_bridge', level: 'error', message: '桥接节点已停止，输出 cmd_vel 被丢弃' },
-  { time: '10:21:07', node: 'logger', level: 'info', message: '写入数据集分片 mock-session-0007' },
+  {
+    time: '10:21:03',
+    timestamp: '2026-06-05T10:21:03.000Z',
+    node: 'camera',
+    level: 'info',
+    message: '已发布第 1842 帧，频率 30hz',
+    rawMessage: '2026-06-05T10:21:03.000Z stdout camera.py:44 已发布第 1842 帧，频率 30hz',
+    source: 'stdout',
+    sourceFile: 'camera.py',
+    sourceLine: '44',
+  },
+  {
+    time: '10:21:04',
+    timestamp: '2026-06-05T10:21:04.000Z',
+    node: 'detector',
+    level: 'warn',
+    message: '输入队列达到 18 条 pending message',
+    rawMessage: '2026-06-05T10:21:04.000Z stderr detector.rs:118 输入队列达到 18 条 pending message',
+    source: 'stderr',
+    sourceFile: 'detector.rs',
+    sourceLine: '118',
+  },
+  {
+    time: '10:21:05',
+    timestamp: '2026-06-05T10:21:05.000Z',
+    node: 'planner',
+    level: 'info',
+    message: '根据 3 个检测结果生成 cmd_vel',
+    rawMessage: '2026-06-05T10:21:05.000Z stdout planner.py:77 根据 3 个检测结果生成 cmd_vel',
+    source: 'stdout',
+    sourceFile: 'planner.py',
+    sourceLine: '77',
+  },
+  {
+    time: '10:21:06',
+    timestamp: '2026-06-05T10:21:06.000Z',
+    node: 'robot_bridge',
+    level: 'error',
+    message: '桥接节点已停止，输出 cmd_vel 被丢弃',
+    rawMessage: '2026-06-05T10:21:06.000Z stderr robot_bridge.py:31 桥接节点已停止，输出 cmd_vel 被丢弃',
+    source: 'stderr',
+    sourceFile: 'robot_bridge.py',
+    sourceLine: '31',
+  },
+  {
+    time: '10:21:07',
+    timestamp: '2026-06-05T10:21:07.000Z',
+    node: 'logger',
+    level: 'info',
+    message: '写入数据集分片 mock-session-0007',
+    rawMessage: '2026-06-05T10:21:07.000Z stdout logger.py:52 写入数据集分片 mock-session-0007',
+    source: 'stdout',
+    sourceFile: 'logger.py',
+    sourceLine: '52',
+  },
 ]
