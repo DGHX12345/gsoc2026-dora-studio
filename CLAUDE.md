@@ -5,8 +5,9 @@ debugging DORA applications.
 
 ## Student
 
-- handle: TBD-fill-in
-- weekly_slot: TBD-fill-in (e.g. "Tuesdays 09:00 PT")
+- handle: DGHX12345
+- weekly_slot: Sundays 18:30-19:00 America/Los_Angeles
+- student_fork: https://github.com/DGHX12345/gsoc2026-dora-studio
 
 ## Mentor
 
@@ -14,18 +15,17 @@ debugging DORA applications.
 
 ## Proposal
 
-The candidate's accepted proposal is committed at the repo root as
-`proposal.pdf`. Treat it as the source of truth for scope and weekly
-goals; quote section anchors when filing issues.
+The candidate's accepted proposal is the authoritative source for scope
+and weekly goals. The PDF is shared privately with the student and
+mentor (not committed to this public repo). Quote relevant excerpts in
+issues and discussions when needed.
 
 ## Milestones
 
-- `Community Bonding` — May–Jun 2026
-- `Coding Phase 1` — Jun–Jul 2026 (ends at midterm eval)
-- `Coding Phase 2` — Jul–Aug 2026
-- `Final Submission` — Aug–Sep 2026
-
-Exact end-dates filled in from Google's published 2026 timeline.
+- `Community Bonding` — ends 2026-05-24 23:59 UTC
+- `Coding Phase 1` — ends 2026-07-10 23:59 UTC (Midterm evaluation deadline)
+- `Coding Phase 2` — ends 2026-08-24 23:59 UTC
+- `Final Submission` — standard 2026-08-24 23:59 UTC; extension to 2026-11-02 in approved cases.
 
 ## Workflow
 
