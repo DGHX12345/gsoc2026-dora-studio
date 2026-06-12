@@ -24,6 +24,23 @@ export type DataflowSummaryResponse = {
   edgeCount: number
 }
 
+export type DataflowDefinitionNodeResponse = {
+  id: string
+  path: string | null
+  inputs: string[]
+  outputs: string[]
+}
+
+export type DataflowDefinitionResponse = {
+  id: string
+  name: string
+  relativePath: string
+  source: string
+  nodeCount: number
+  edgeCount: number
+  nodes: DataflowDefinitionNodeResponse[]
+}
+
 export type NodeMetricsResponse = {
   id: string
   label: string
@@ -86,6 +103,10 @@ export function getSystemStatus(fallback: SystemStatusResponse) {
 
 export function getDataflows(fallback: DataflowSummaryResponse[]) {
   return withFallback('/dataflows', fallback)
+}
+
+export function getDataflowDefinition(id: string, fallback: DataflowDefinitionResponse) {
+  return withFallback(`/dataflows/${id}/definition`, fallback)
 }
 
 export function getNodes(id: string, fallback: NodeMetricsResponse[]) {

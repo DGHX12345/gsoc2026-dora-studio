@@ -1,5 +1,11 @@
 use serde::Serialize;
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ApiError {
+    pub error: String,
+}
+
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RuntimeState {
@@ -22,20 +28,41 @@ pub struct SystemStatus {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DataflowSummary {
-    pub id: &'static str,
-    pub name: &'static str,
-    pub status: &'static str,
+    pub id: String,
+    pub name: String,
+    pub status: String,
     pub node_count: u32,
     pub edge_count: u32,
 }
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct DataflowDefinition {
+    pub id: String,
+    pub name: String,
+    pub relative_path: String,
+    pub source: String,
+    pub node_count: u32,
+    pub edge_count: u32,
+    pub nodes: Vec<DataflowDefinitionNode>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DataflowDefinitionNode {
+    pub id: String,
+    pub path: Option<String>,
+    pub inputs: Vec<String>,
+    pub outputs: Vec<String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct NodeMetrics {
-    pub id: &'static str,
-    pub label: &'static str,
-    pub kind: &'static str,
-    pub status: &'static str,
+    pub id: String,
+    pub label: String,
+    pub kind: String,
+    pub status: String,
     pub cpu: u32,
     pub memory: u32,
     pub restarts: u32,
@@ -59,34 +86,34 @@ pub struct LogEntry {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GraphNode {
-    pub id: &'static str,
-    pub label: &'static str,
-    pub kind: &'static str,
-    pub status: &'static str,
+    pub id: String,
+    pub label: String,
+    pub kind: String,
+    pub status: String,
     pub x: u32,
     pub y: u32,
-    pub inputs: Vec<&'static str>,
-    pub outputs: Vec<&'static str>,
+    pub inputs: Vec<String>,
+    pub outputs: Vec<String>,
     pub cpu: u32,
     pub memory: u32,
     pub restarts: u32,
     pub pending: u32,
-    pub note: &'static str,
+    pub note: String,
 }
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GraphEdge {
-    pub id: &'static str,
-    pub from: &'static str,
-    pub to: &'static str,
-    pub label: &'static str,
+    pub id: String,
+    pub from: String,
+    pub to: String,
+    pub label: String,
 }
 
 #[derive(Serialize)]
 pub struct Diagnostic {
-    pub severity: &'static str,
-    pub message: &'static str,
+    pub severity: String,
+    pub message: String,
 }
 
 #[derive(Serialize)]

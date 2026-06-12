@@ -431,15 +431,29 @@ nav button:hover {
 .flow-file {
   background: #f3f6fb;
   color: #31415d;
-  display: block;
+  display: grid;
+  gap: 4px;
   margin-bottom: 10px;
   text-align: left;
   width: 100%;
 }
 
+.flow-file strong,
+.flow-file small {
+  display: block;
+}
+
+.flow-file small {
+  color: #65738b;
+}
+
 .flow-file.active {
   background: #2457ff;
   color: white;
+}
+
+.flow-file.active small {
+  color: #dbe5ff;
 }
 
 .diagnostics-box {
@@ -490,11 +504,11 @@ nav button:hover {
 }
 
 .edge-layer {
-  height: 100%;
-  inset: 0;
+  height: 480px;
+  inset: 0 auto auto 0;
   overflow: visible;
   position: absolute;
-  width: 100%;
+  width: 1000px;
 }
 
 .edge-layer path {

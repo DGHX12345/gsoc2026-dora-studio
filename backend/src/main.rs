@@ -1,9 +1,12 @@
+mod dataflows;
 mod mock;
 mod models;
 mod runtime;
 
 use axum::{
     extract::{Path, State},
+    http::StatusCode,
+    response::{IntoResponse, Response},
     routing::{get, post},
     Json, Router,
 };
@@ -16,6 +19,7 @@ async fn main() {
         .route("/api/health", get(health))
         .route("/api/system/status", get(system_status))
         .route("/api/dataflows", get(dataflows))
+        .route("/api/dataflows/:id/definition", get(dataflow_definition))
         .route("/api/dataflows/:id/nodes", get(dataflow_nodes))
         .route("/api/dataflows/:id/logs", get(dataflow_logs))
         .route("/api/dataflows/:id/graph", get(dataflow_graph))
@@ -38,6 +42,42 @@ async fn main() {
         .expect("server failed");
 }
 
+struct ApiError {
+    status: StatusCode,
+    message: String,
+}
+
+impl From<dataflows::DataflowError> for ApiError {
+    fn from(error: dataflows::DataflowError) -> Self {
+        match error {
+            dataflows::DataflowError::NotFound(message) => Self {
+                status: StatusCode::NOT_FOUND,
+                message,
+            },
+            dataflows::DataflowError::Invalid(message) => Self {
+                status: StatusCode::UNPROCESSABLE_ENTITY,
+                message,
+            },
+            dataflows::DataflowError::Io(message) => Self {
+                status: StatusCode::INTERNAL_SERVER_ERROR,
+                message,
+            },
+        }
+    }
+}
+
+impl IntoResponse for ApiError {
+    fn into_response(self) -> Response {
+        (
+            self.status,
+            Json(models::ApiError {
+                error: self.message,
+            }),
+        )
+            .into_response()
+    }
+}
+
 async fn health() -> Json<serde_json::Value> {
     Json(serde_json::json!({ "ok": true }))
 }
@@ -46,20 +86,32 @@ async fn system_status() -> Json<models::SystemStatus> {
     Json(mock::system_status())
 }
 
-async fn dataflows() -> Json<Vec<models::DataflowSummary>> {
-    Json(mock::dataflows())
+async fn dataflows() -> Result<Json<Vec<models::DataflowSummary>>, ApiError> {
+    dataflows::list_dataflows()
+        .map(Json)
+        .map_err(ApiError::from)
 }
 
-async fn dataflow_nodes(Path(_id): Path<String>) -> Json<Vec<models::NodeMetrics>> {
-    Json(mock::nodes())
+async fn dataflow_definition(
+    Path(id): Path<String>,
+) -> Result<Json<models::DataflowDefinition>, ApiError> {
+    dataflows::load_definition(&id)
+        .map(Json)
+        .map_err(ApiError::from)
+}
+
+async fn dataflow_nodes(
+    Path(id): Path<String>,
+) -> Result<Json<Vec<models::NodeMetrics>>, ApiError> {
+    dataflows::nodes(&id).map(Json).map_err(ApiError::from)
 }
 
 async fn dataflow_logs(Path(_id): Path<String>) -> Json<Vec<models::LogEntry>> {
     Json(mock::logs())
 }
 
-async fn dataflow_graph(Path(_id): Path<String>) -> Json<models::DataflowGraph> {
-    Json(mock::graph())
+async fn dataflow_graph(Path(id): Path<String>) -> Result<Json<models::DataflowGraph>, ApiError> {
+    dataflows::graph(&id).map(Json).map_err(ApiError::from)
 }
 
 async fn runtime_status(
