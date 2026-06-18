@@ -5,6 +5,7 @@ export type ApiSource = 'connected' | 'fallback'
 export type ApiResult<T> = {
   data: T
   source: ApiSource
+  error?: string
 }
 
 export type SystemStatusResponse = {
@@ -69,6 +70,8 @@ export type RuntimeStateResponse = {
   status: RuntimeStatus
   pid: number | null
   lastMessage: string
+  dataflowId: string | null
+  dataflowPath: string | null
 }
 
 const API_BASE_URL = 'http://127.0.0.1:3001/api'
@@ -89,10 +92,11 @@ async function withFallback<T>(path: string, fallback: T): Promise<ApiResult<T>>
       data: await fetchJson<T>(path),
       source: 'connected',
     }
-  } catch {
+  } catch (error) {
     return {
       data: fallback,
       source: 'fallback',
+      error: error instanceof Error ? error.message : 'Backend API is unavailable.',
     }
   }
 }
@@ -135,4 +139,16 @@ export function startRuntime() {
 
 export function stopRuntime() {
   return fetchJson<RuntimeStateResponse>('/runtime/stop', { method: 'POST' })
+}
+
+export function startDataflowRuntime(id: string) {
+  return fetchJson<RuntimeStateResponse>(`/dataflows/${id}/start`, { method: 'POST' })
+}
+
+export function stopDataflowRuntime(id: string) {
+  return fetchJson<RuntimeStateResponse>(`/dataflows/${id}/stop`, { method: 'POST' })
+}
+
+export function restartDataflowRuntime(id: string) {
+  return fetchJson<RuntimeStateResponse>(`/dataflows/${id}/restart`, { method: 'POST' })
 }

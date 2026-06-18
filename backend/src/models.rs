@@ -12,6 +12,8 @@ pub struct RuntimeState {
     pub status: String,
     pub pid: Option<u32>,
     pub last_message: String,
+    pub dataflow_id: Option<String>,
+    pub dataflow_path: Option<String>,
 }
 
 #[derive(Serialize)]

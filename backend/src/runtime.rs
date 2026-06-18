@@ -30,6 +30,8 @@ impl RuntimeManager {
                 status: "stopped".to_string(),
                 pid: None,
                 last_message: "Dataflow has not been started from Studio.".to_string(),
+                dataflow_id: None,
+                dataflow_path: None,
             }),
         })
     }
@@ -48,18 +50,22 @@ impl RuntimeManager {
             .collect()
     }
 
-    pub async fn start(self: &Arc<Self>) -> RuntimeState {
+    pub async fn start_dataflow(
+        self: &Arc<Self>,
+        dataflow_id: String,
+        dataflow_path: PathBuf,
+        relative_path: String,
+    ) -> RuntimeState {
         {
             let mut child = self.child.lock().await;
             if child.is_some() {
                 return self.status().await;
             }
 
-            let dataflow_path = repo_root().join("examples/robot-perception-test/dataflow.yml");
             let mut command = Command::new("dora");
             command
                 .arg("run")
-                .arg(dataflow_path)
+                .arg(&dataflow_path)
                 .current_dir(repo_root())
                 .stdout(std::process::Stdio::piped())
                 .stderr(std::process::Stdio::piped());
@@ -80,9 +86,9 @@ impl RuntimeManager {
                     *self.state.lock().await = RuntimeState {
                         status: "running".to_string(),
                         pid,
-                        last_message:
-                            "Started examples/robot-perception-test/dataflow.yml through dora run."
-                                .to_string(),
+                        last_message: format!("Started {relative_path} through dora run."),
+                        dataflow_id: Some(dataflow_id),
+                        dataflow_path: Some(relative_path),
                     };
                     *child = Some(process);
                 }
@@ -91,6 +97,8 @@ impl RuntimeManager {
                         status: "failed".to_string(),
                         pid: None,
                         last_message: format!("Failed to start dora run: {error}"),
+                        dataflow_id: Some(dataflow_id),
+                        dataflow_path: Some(relative_path),
                     };
                 }
             }
@@ -99,7 +107,17 @@ impl RuntimeManager {
         self.status().await
     }
 
+    pub async fn start(self: &Arc<Self>) -> RuntimeState {
+        self.start_dataflow(
+            "robot-perception-test".to_string(),
+            repo_root().join("examples/robot-perception-test/dataflow.yml"),
+            "examples/robot-perception-test/dataflow.yml".to_string(),
+        )
+        .await
+    }
+
     pub async fn stop(&self) -> RuntimeState {
+        let previous = self.state.lock().await.clone();
         let mut child = self.child.lock().await;
         if let Some(mut process) = child.take() {
             match process.kill().await {
@@ -108,6 +126,8 @@ impl RuntimeManager {
                         status: "stopped".to_string(),
                         pid: None,
                         last_message: "Stopped dataflow process from Studio.".to_string(),
+                        dataflow_id: previous.dataflow_id.clone(),
+                        dataflow_path: previous.dataflow_path.clone(),
                     };
                 }
                 Err(error) => {
@@ -115,6 +135,8 @@ impl RuntimeManager {
                         status: "failed".to_string(),
                         pid: None,
                         last_message: format!("Failed to stop dataflow process: {error}"),
+                        dataflow_id: previous.dataflow_id.clone(),
+                        dataflow_path: previous.dataflow_path.clone(),
                     };
                 }
             }
@@ -123,6 +145,8 @@ impl RuntimeManager {
                 status: "stopped".to_string(),
                 pid: None,
                 last_message: "No running dataflow process.".to_string(),
+                dataflow_id: previous.dataflow_id,
+                dataflow_path: previous.dataflow_path,
             };
         }
 

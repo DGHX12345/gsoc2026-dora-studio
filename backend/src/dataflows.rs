@@ -17,6 +17,7 @@ pub enum DataflowError {
 
 struct ParsedDataflow {
     nodes: Vec<ParsedNode>,
+    diagnostics: Vec<Diagnostic>,
 }
 
 struct ParsedNode {
@@ -26,11 +27,11 @@ struct ParsedNode {
     outputs: Vec<String>,
 }
 
-struct DataflowFile {
-    id: String,
-    name: String,
-    path: PathBuf,
-    relative_path: String,
+pub struct DataflowFile {
+    pub id: String,
+    pub name: String,
+    pub path: PathBuf,
+    pub relative_path: String,
 }
 
 enum NodeSection {
@@ -102,13 +103,18 @@ pub fn graph(id: &str) -> Result<DataflowGraph, DataflowError> {
             edge
         })
         .collect::<Vec<_>>();
-    let diagnostics = vec![Diagnostic {
-        severity: "info".to_string(),
-        message: format!(
-            "Loaded {} from {}.",
-            definition.name, definition.relative_path
-        ),
-    }];
+    let parsed = read_parsed_dataflow(&find_file(id)?.path)?;
+    let mut diagnostics = parsed.diagnostics;
+    diagnostics.insert(
+        0,
+        Diagnostic {
+            severity: "info".to_string(),
+            message: format!(
+                "Loaded {} from {}.",
+                definition.name, definition.relative_path
+            ),
+        },
+    );
 
     Ok(DataflowGraph {
         nodes,
@@ -147,6 +153,8 @@ fn parse_dataflow(source: &str, label: &str) -> Result<ParsedDataflow, DataflowE
     let mut current_section: Option<NodeSection> = None;
     let mut in_nodes = false;
 
+    let mut diagnostics = Vec::new();
+
     for raw_line in source.lines() {
         let trimmed = raw_line.trim();
         if trimmed.is_empty() || trimmed.starts_with('#') {
@@ -160,6 +168,14 @@ fn parse_dataflow(source: &str, label: &str) -> Result<ParsedDataflow, DataflowE
         }
 
         if indent == 0 && trimmed != "nodes:" {
+            if let Some(section) = trimmed.strip_suffix(':') {
+                diagnostics.push(Diagnostic {
+                    severity: "warn".to_string(),
+                    message: format!(
+                        "Unsupported top-level section '{section}' in {label} was ignored."
+                    ),
+                });
+            }
             break;
         }
 
@@ -205,7 +221,7 @@ fn parse_dataflow(source: &str, label: &str) -> Result<ParsedDataflow, DataflowE
         )));
     }
 
-    Ok(ParsedDataflow { nodes })
+    Ok(ParsedDataflow { nodes, diagnostics })
 }
 
 fn push_node(
@@ -400,6 +416,10 @@ fn kind_for_path(path: Option<&str>) -> String {
     }
 }
 
+pub fn resolve_dataflow(id: &str) -> Result<DataflowFile, DataflowError> {
+    find_file(id)
+}
+
 fn find_file(id: &str) -> Result<DataflowFile, DataflowError> {
     discover_files()?
         .into_iter()
@@ -591,6 +611,43 @@ nodes:
         assert_eq!(definition.edge_count, 6);
         assert!(definition.source.contains("robot_bridge"));
         assert!(definition.nodes.iter().any(|node| node.id == "camera"));
+    }
+
+    #[test]
+    fn resolves_example_dataflow_path() {
+        let file = resolve_dataflow("robot-perception-test").expect("dataflow resolves");
+
+        assert_eq!(file.id, "robot-perception-test");
+        assert_eq!(
+            file.relative_path,
+            "examples/robot-perception-test/dataflow.yml"
+        );
+        assert!(file
+            .path
+            .ends_with("examples/robot-perception-test/dataflow.yml"));
+    }
+
+    #[test]
+    fn graph_reports_unsupported_top_level_sections() {
+        let parsed = parse_dataflow(
+            r#"
+nodes:
+  - id: camera
+    path: camera.py
+    outputs:
+      - frame
+_unstable_debug:
+  enable_debug_inspection: true
+"#,
+            "sample.yml",
+        )
+        .expect("sample parses with warning");
+
+        assert!(parsed
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.severity == "warn"
+                && diagnostic.message.contains("_unstable_debug")));
     }
 
     #[test]

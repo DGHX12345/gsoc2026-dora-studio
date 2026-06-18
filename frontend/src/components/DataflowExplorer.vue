@@ -23,6 +23,7 @@
 
       <div class="diagnostics-box">
         <h3>诊断信息</h3>
+        <div v-if="apiError" class="diagnostic warning">{{ apiError }}</div>
         <div v-for="item in diagnostics" :key="item.message" :class="['diagnostic', item.severity]">
           {{ item.message }}
         </div>
@@ -156,6 +157,7 @@ const diagnostics = ref(fallbackGraph.diagnostics)
 const selectedDataflowId = ref(fallbackDataflows[0].id)
 const selectedId = ref('detector')
 const apiSource = ref<ApiSource>('fallback')
+const apiError = ref('')
 const apiSourceText = computed(() => (apiSource.value === 'connected' ? 'API connected' : 'Using mock fallback'))
 const selectedNode = computed(() => nodes.value.find((node) => node.id === selectedId.value) ?? nodes.value[0] ?? null)
 
@@ -195,6 +197,7 @@ async function loadDataflow(id: string) {
   diagnostics.value = graphResult.data.diagnostics
   selectedId.value = nodes.value[0]?.id ?? ''
   apiSource.value = definitionResult.source === 'connected' || graphResult.source === 'connected' ? 'connected' : 'fallback'
+  apiError.value = definitionResult.error ?? graphResult.error ?? ''
 }
 
 async function selectDataflow(id: string) {
@@ -205,6 +208,7 @@ onMounted(async () => {
   const result = await getDataflows(fallbackDataflows)
   dataflows.value = result.data
   apiSource.value = result.source
+  apiError.value = result.error ?? ''
 
   if (dataflows.value.length > 0) {
     await loadDataflow(dataflows.value[0].id)

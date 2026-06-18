@@ -3,9 +3,21 @@
     <div class="panel run-panel large-action-panel">
       <div>
         <p class="eyebrow">Run & Monitor</p>
-        <h2>robot-perception-demo.yml</h2>
-        <p class="muted">从这里启动或停止 examples/robot-perception-test/dataflow.yml，用真实 Dora run 输出测试 Studio。</p>
+        <h2>{{ selectedDataflow?.name ?? 'No dataflow selected' }}</h2>
+        <p class="muted">
+          从这里启动或停止选中的本地 dataflow，用真实 Dora run 输出测试 Studio。
+          <span v-if="runtime.dataflowPath">当前路径：{{ runtime.dataflowPath }}</span>
+        </p>
       </div>
+      <label class="flow-select">
+        <span>目标 Dataflow</span>
+        <select v-model="selectedDataflowId" @change="refreshSelectedNodes">
+          <option v-for="flow in dataflows" :key="flow.id" :value="flow.id">
+            {{ flow.name }}
+          </option>
+        </select>
+      </label>
+      <p v-if="apiError" class="muted">{{ apiError }}</p>
       <div class="control-row">
         <button class="secondary" @click="refreshRuntime">刷新状态</button>
         <button @click="startDataflow" :disabled="runtime.status === 'running'">启动示例</button>
@@ -61,11 +73,14 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import {
+  getDataflows,
   getNodes,
   getRuntimeStatus,
-  startRuntime,
-  stopRuntime,
+  restartDataflowRuntime,
+  startDataflowRuntime,
+  stopDataflowRuntime,
   type ApiSource,
+  type DataflowSummaryResponse,
   type NodeMetricsResponse,
   type RuntimeStateResponse,
 } from '../api'
@@ -86,12 +101,30 @@ const fallbackRuntime: RuntimeStateResponse = {
   status: 'stopped',
   pid: null,
   lastMessage: 'Backend runtime API is not connected.',
+  dataflowId: null,
+  dataflowPath: null,
 }
+
+const fallbackDataflows: DataflowSummaryResponse[] = [
+  {
+    id: 'robot-perception-demo',
+    name: 'robot-perception-demo.yml',
+    status: 'running',
+    nodeCount: dataflowNodes.length,
+    edgeCount: 0,
+  },
+]
 
 const nodes = ref<NodeMetricsResponse[]>(fallbackNodes)
 const runtime = ref<RuntimeStateResponse>(fallbackRuntime)
+const dataflows = ref<DataflowSummaryResponse[]>(fallbackDataflows)
+const selectedDataflowId = ref(fallbackDataflows[0].id)
+const apiError = ref('')
 const apiSource = ref<ApiSource>('fallback')
 const apiSourceText = computed(() => (apiSource.value === 'connected' ? 'API connected' : 'Using mock fallback'))
+const selectedDataflow = computed(
+  () => dataflows.value.find((flow) => flow.id === selectedDataflowId.value) ?? dataflows.value[0],
+)
 const runtimeStatusText = computed(() => {
   if (runtime.value.status === 'running') return '运行中'
   if (runtime.value.status === 'failed') return '失败'
@@ -112,25 +145,36 @@ async function refreshRuntime() {
 }
 
 async function startDataflow() {
-  runtime.value = await startRuntime()
+  runtime.value = await startDataflowRuntime(selectedDataflowId.value)
 }
 
 async function stopDataflow() {
-  runtime.value = await stopRuntime()
+  runtime.value = await stopDataflowRuntime(selectedDataflowId.value)
 }
 
 async function restartDataflow() {
-  await stopDataflow()
-  runtime.value = await startRuntime()
+  runtime.value = await restartDataflowRuntime(selectedDataflowId.value)
+}
+
+async function refreshSelectedNodes() {
+  const result = await getNodes(selectedDataflowId.value, fallbackNodes)
+  nodes.value = result.data
+  apiSource.value = result.source
+  apiError.value = result.error ?? ''
 }
 
 onMounted(async () => {
-  const [nodesResult, runtimeResult] = await Promise.all([
-    getNodes('robot-perception-demo', fallbackNodes),
+  const [dataflowsResult, runtimeResult] = await Promise.all([
+    getDataflows(fallbackDataflows),
     getRuntimeStatus(fallbackRuntime),
   ])
-  nodes.value = nodesResult.data
+
+  dataflows.value = dataflowsResult.data
+  selectedDataflowId.value = dataflows.value[0]?.id ?? fallbackDataflows[0].id
   runtime.value = runtimeResult.data
-  apiSource.value = nodesResult.source === 'connected' || runtimeResult.source === 'connected' ? 'connected' : 'fallback'
+  apiSource.value = dataflowsResult.source === 'connected' || runtimeResult.source === 'connected' ? 'connected' : 'fallback'
+  apiError.value = dataflowsResult.error ?? runtimeResult.error ?? ''
+
+  await refreshSelectedNodes()
 })
 </script>
