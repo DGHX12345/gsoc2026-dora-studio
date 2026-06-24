@@ -136,3 +136,57 @@ export function startRuntime() {
 export function stopRuntime() {
   return fetchJson<RuntimeStateResponse>('/runtime/stop', { method: 'POST' })
 }
+
+export function startDataflowRuntime(id: string) {
+  return fetchJson<RuntimeStateResponse>(`/dataflows/${id}/start`, { method: 'POST' })
+}
+
+export function stopDataflowRuntime(id: string) {
+  return fetchJson<RuntimeStateResponse>(`/dataflows/${id}/stop`, { method: 'POST' })
+}
+
+export function restartDataflowRuntime(id: string) {
+  return fetchJson<RuntimeStateResponse>(`/dataflows/${id}/restart`, { method: 'POST' })
+}
+
+// --- Week 5: Coordinator, dviz, moveit ---
+
+export type CoordinatorDataflowResponse = {
+  id: string
+  name: string
+  status: string
+  nodes: number
+}
+
+export type CoordinatorStatusResponse = {
+  connected: boolean
+  version: string
+  runningDataflows: number
+  activeNodes: number
+  dataflows: CoordinatorDataflowResponse[]
+}
+
+export type DvizStatusResponse = {
+  installed: boolean
+  running: boolean
+  binaryPath: string | null
+  message: string
+}
+
+export type MoveitStatusResponse = {
+  installed: boolean
+  running: boolean
+  message: string
+}
+
+export function getCoordinatorStatus(fallback: CoordinatorStatusResponse) {
+  return withFallback('/coordinator/status', fallback)
+}
+
+export function getDvizStatus(fallback: DvizStatusResponse) {
+  return withFallback('/dviz/status', fallback)
+}
+
+export function getMoveitStatus(fallback: MoveitStatusResponse) {
+  return withFallback('/moveit/status', fallback)
+}

@@ -48,7 +48,9 @@
       <DashboardView v-if="activeView === 'dashboard'" />
       <DataflowExplorer v-else-if="activeView === 'explorer'" />
       <RunMonitorView v-else-if="activeView === 'monitor'" />
-      <LogsEventsView v-else />
+      <LogsEventsView v-else-if="activeView === 'logs'" />
+      <VisualizationView v-else-if="activeView === 'visualization'" />
+      <MotionPlannerView v-else />
     </main>
   </div>
 </template>
@@ -57,8 +59,10 @@
 import { computed, ref } from 'vue'
 import DashboardView from './components/DashboardView.vue'
 import DataflowExplorer from './components/DataflowExplorer.vue'
+import MotionPlannerView from './components/MotionPlannerView.vue'
 import RunMonitorView from './components/RunMonitorView.vue'
 import LogsEventsView from './components/LogsEventsView.vue'
+import VisualizationView from './components/VisualizationView.vue'
 import { useI18n } from './i18n'
 import type { ViewId } from './types'
 
@@ -69,6 +73,8 @@ const navItems = computed(() => [
   { id: 'explorer' as ViewId, icon: '02', ...t.value.nav.explorer },
   { id: 'monitor' as ViewId, icon: '03', ...t.value.nav.monitor },
   { id: 'logs' as ViewId, icon: '04', ...t.value.nav.logs },
+  { id: 'visualization' as ViewId, icon: '05', ...t.value.nav.visualization },
+  { id: 'motion' as ViewId, icon: '06', ...t.value.nav.motion },
 ])
 
 const activeView = ref<ViewId>('explorer')
