@@ -2,9 +2,9 @@ use crate::models::{LogEntry, SystemStatus};
 
 pub fn system_status() -> SystemStatus {
     SystemStatus {
-        coordinator: "connected",
-        daemon: "healthy",
-        version: "dora 0.x mock",
+        coordinator: "connected".to_string(),
+        daemon: "healthy".to_string(),
+        version: "dora 0.x mock".to_string(),
         running_dataflows: 2,
         active_nodes: 7,
         error_count: 1,

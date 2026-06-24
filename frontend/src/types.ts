@@ -1,1 +1,1 @@
-export type ViewId = 'dashboard' | 'explorer' | 'monitor' | 'logs'
+export type ViewId = 'dashboard' | 'explorer' | 'monitor' | 'logs' | 'visualization' | 'motion'
