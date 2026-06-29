@@ -216,7 +216,11 @@ function closeLogModal() {
 
 async function refreshLogs() {
   const result = await getRuntimeLogs(fallbackLogs)
-  logs.value = result.data.length > 0 ? result.data : fallbackLogs
+  if (result.source === 'connected') {
+    logs.value = result.data
+  } else {
+    logs.value = fallbackLogs
+  }
   apiSource.value = result.source
 }
 

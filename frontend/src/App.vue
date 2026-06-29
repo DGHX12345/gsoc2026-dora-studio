@@ -2,7 +2,7 @@
   <div class="app-shell">
     <aside class="app-sidebar">
       <div class="brand-block">
-        <div class="brand-mark">DS</div>
+        <img class="brand-logo" src="/dora-logo.jpg" alt="DORA" />
         <div>
           <strong>dora-studio</strong>
           <span>{{ t.app.prototype }}</span>
@@ -21,11 +21,20 @@
         </button>
       </nav>
 
+      <button class="theme-toggle" @click="toggleTheme">
+        <span class="theme-icon">{{ darkMode ? '\u263E' : '\u2600' }}</span>
+        {{ darkMode ? '深色模式' : '浅色模式' }}
+      </button>
+
       <div class="sidebar-footer">
-        <span class="status-light"></span>
+        <span :class="['status-light', (coordinatorConnected || runtimeActive) ? 'online' : 'offline']"></span>
         <div>
-          <strong>{{ t.app.runtimeTitle }}</strong>
-          <p>{{ t.app.runtimeSubtitle }}</p>
+          <strong>
+            {{ runtimeActive ? 'Dataflow 运行中' : coordinatorConnected ? 'DORA 已连接' : 'DORA 未连接' }}
+          </strong>
+          <p>
+            {{ runtimeActive ? `PID ${runtimePid} · 日志收集中` : coordinatorConnected ? `协调器运行中 · ${runningFlows} 个 dataflow` : '启动 dora up 或运行 dataflow' }}
+          </p>
         </div>
       </div>
     </aside>
@@ -56,17 +65,71 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import DashboardView from './components/DashboardView.vue'
 import DataflowExplorer from './components/DataflowExplorer.vue'
 import MotionPlannerView from './components/MotionPlannerView.vue'
 import RunMonitorView from './components/RunMonitorView.vue'
 import LogsEventsView from './components/LogsEventsView.vue'
 import VisualizationView from './components/VisualizationView.vue'
+import { getCoordinatorStatus, getRuntimeStatus, type CoordinatorStatusResponse, type RuntimeStateResponse } from './api'
 import { useI18n } from './i18n'
 import type { ViewId } from './types'
 
 const { t, toggleLocale } = useI18n()
+
+const darkMode = ref(false)
+
+function toggleTheme() {
+  darkMode.value = !darkMode.value
+  document.documentElement.setAttribute('data-theme', darkMode.value ? 'dark' : 'light')
+  localStorage.setItem('dora-studio-theme', darkMode.value ? 'dark' : 'light')
+}
+
+const coordinatorConnected = ref(false)
+const runningFlows = ref(0)
+const runtimeActive = ref(false)
+const runtimePid = ref<number | null>(null)
+let coordinatorTimer: number | undefined
+
+async function pollStatus() {
+  // Check coordinator
+  try {
+    const coord = await getCoordinatorStatus({
+      connected: false, version: '', runningDataflows: 0, activeNodes: 0, dataflows: [],
+    })
+    coordinatorConnected.value = coord.data.connected
+    runningFlows.value = coord.data.runningDataflows
+  } catch {
+    coordinatorConnected.value = false
+  }
+
+  // Check runtime (dora run subprocess)
+  try {
+    const rt = await getRuntimeStatus({
+      status: 'stopped', pid: null, lastMessage: '', dataflowId: null, dataflowPath: null,
+    })
+    runtimeActive.value = rt.data.status === 'running'
+    runtimePid.value = rt.data.pid
+  } catch {
+    runtimeActive.value = false
+  }
+}
+
+onMounted(() => {
+  const saved = localStorage.getItem('dora-studio-theme')
+  if (saved === 'dark') {
+    darkMode.value = true
+    document.documentElement.setAttribute('data-theme', 'dark')
+  }
+
+  pollStatus()
+  coordinatorTimer = window.setInterval(pollStatus, 5000)
+})
+
+onUnmounted(() => {
+  if (coordinatorTimer) window.clearInterval(coordinatorTimer)
+})
 
 const navItems = computed(() => [
   { id: 'dashboard' as ViewId, icon: '01', ...t.value.nav.dashboard },

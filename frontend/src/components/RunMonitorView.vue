@@ -67,6 +67,10 @@
         </table>
       </div>
     </article>
+
+    <p v-if="runtime.status === 'running'" class="muted" style="text-align: center; padding: 10px 0;">
+      运行中 · 切换到 <strong>Logs & Events</strong> 页面查看实时日志输出
+    </p>
   </section>
 </template>
 
@@ -142,18 +146,22 @@ async function refreshRuntime() {
   const result = await getRuntimeStatus(fallbackRuntime)
   runtime.value = result.data
   apiSource.value = result.source
+  await refreshSelectedNodes()
 }
 
 async function startDataflow() {
   runtime.value = await startDataflowRuntime(selectedDataflowId.value)
+  await refreshSelectedNodes()
 }
 
 async function stopDataflow() {
   runtime.value = await stopDataflowRuntime(selectedDataflowId.value)
+  await refreshSelectedNodes()
 }
 
 async function restartDataflow() {
   runtime.value = await restartDataflowRuntime(selectedDataflowId.value)
+  await refreshSelectedNodes()
 }
 
 async function refreshSelectedNodes() {

@@ -2,16 +2,13 @@
   <section class="dashboard-grid">
     <div class="hero-card dashboard-hero">
       <div>
-        <p class="eyebrow">Dora Studio</p>
-        <h1>面向 Dora dataflow 的可视化观测与调试工作台</h1>
+        <p class="eyebrow">DORA Studio</p>
+        <h1>dora-studio · 可视化观测与调试工作台</h1>
         <p class="hero-copy">
-          先通过静态原型明确产品形态，后续逐步接入真实的 Dora descriptor、runtime、logs 和 metrics API。
+          理解 dataflow 结构 · 观测运行状态 · 调试日志事件 · 机器人 3D 可视化 · 运动规划控制
         </p>
       </div>
-      <div class="hero-actions">
-        <button>打开 dataflow</button>
-        <button class="secondary">连接运行时</button>
-      </div>
+      <img class="hero-banner" src="/dora-banner.jpg" alt="DORA" />
     </div>
 
     <div class="metric-grid dashboard-metrics">
