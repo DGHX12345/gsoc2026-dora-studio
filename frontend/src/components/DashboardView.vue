@@ -1,153 +1,204 @@
 <template>
-  <section class="dashboard-grid">
-    <div class="hero-card dashboard-hero">
-      <div>
-        <p class="eyebrow">DORA Studio</p>
-        <h1>dora-studio · 可视化观测与调试工作台</h1>
-        <p class="hero-copy">
-          理解 dataflow 结构 · 观测运行状态 · 调试日志事件 · 机器人 3D 可视化 · 运动规划控制
-        </p>
-      </div>
-      <img class="hero-banner" src="/dora-banner.jpg" alt="DORA" />
-    </div>
-
-    <div class="metric-grid dashboard-metrics">
-      <article class="metric-card success large-metric">
+  <section class="view-stack">
+    <div class="metric-grid">
+      <article :class="['metric-card', 'large-metric', coordinatorConnected ? 'success' : 'warning']">
         <span>Coordinator</span>
-        <strong>{{ system.coordinator }}</strong>
-        <small>{{ system.version }}</small>
+        <strong>{{ coordinatorConnected ? 'Connected' : 'Unavailable' }}</strong>
+        <small>{{ coordinatorVersion || 'dora daemon not detected' }}</small>
       </article>
-      <article class="metric-card success large-metric">
-        <span>Daemon</span>
-        <strong>{{ system.daemon }}</strong>
-        <small>心跳延迟 42ms</small>
+      <article :class="['metric-card', 'large-metric', runtimeStatus === 'running' ? 'success' : '']">
+        <span>Runtime</span>
+        <strong>{{ runtimeStatusText }}</strong>
+        <small>{{ runtimeLastMessage }}</small>
       </article>
-      <article class="metric-card large-metric">
-        <span>运行中 Dataflow</span>
-        <strong>{{ system.runningDataflows }}</strong>
-        <small>{{ system.activeNodes }} 个活跃节点</small>
+      <article :class="['metric-card', 'large-metric', dviz.installed ? 'success' : '']">
+        <span>dviz</span>
+        <strong>{{ dviz.installed ? (dviz.running ? 'Running' : 'Installed') : 'Not installed' }}</strong>
+        <small>{{ dviz.message }}</small>
       </article>
-      <article class="metric-card danger large-metric">
-        <span>最近错误</span>
-        <strong>{{ system.errorCount }}</strong>
-        <small>robot_bridge 需要关注</small>
+      <article :class="['metric-card', 'large-metric', moveit.installed ? 'success' : '']">
+        <span>dora-moveit2</span>
+        <strong>{{ moveit.installed ? (moveit.running ? 'Running' : 'Installed') : 'Not installed' }}</strong>
+        <small>{{ moveit.message }}</small>
       </article>
     </div>
 
-    <article class="panel active-flow-panel">
-      <div class="panel-header">
-        <h2>当前 dataflow</h2>
-        <span class="pill running">运行中</span>
-      </div>
-      <div class="flow-summary prominent-flow">
-        <strong>robot-perception-demo.yml</strong>
-        <span>camera → detector → planner → robot_bridge</span>
-      </div>
-      <div class="progress-list big-progress">
-        <div><span>结构图解析</span><b>已就绪</b></div>
-        <div><span>运行时连接</span><b>Mock</b></div>
-        <div><span>日志流</span><b>已启用</b></div>
-        <div><span>数据采集出口</span><b>已预留</b></div>
-      </div>
-    </article>
-
-    <article class="panel events-panel">
-      <div class="panel-header">
-        <h2>最近事件</h2>
-        <span :class="['pill', apiSource === 'connected' ? 'success' : 'warning']">{{ apiSourceText }}</span>
-      </div>
-      <ul class="event-list large-events">
-        <li v-for="log in logs.slice(0, 5)" :key="`${log.time}-${log.node}`">
-          <span :class="['dot', log.level]"></span>
-          <div>
-            <strong>{{ log.node }}</strong>
-            <p>{{ log.message }}</p>
+    <div class="split-grid">
+      <article class="panel">
+        <div class="panel-header">
+          <h2>Coordinator Dataflows</h2>
+          <span :class="['pill', coordinatorConnected ? 'success' : 'warning']">
+            {{ coordinatorConnected ? `${coordinatorDataflows.length} dataflows` : 'unavailable' }}
+          </span>
+        </div>
+        <div v-if="!coordinatorConnected" class="empty-state">
+          Coordinator is not available. Start the dora daemon to see running dataflows.
+        </div>
+        <div v-else-if="coordinatorDataflows.length === 0" class="empty-state">
+          No dataflows registered with the coordinator.
+        </div>
+        <div v-else class="coordinator-flow-list">
+          <div v-for="df in coordinatorDataflows" :key="df.id" class="coordinator-flow-item">
+            <strong>{{ df.name }}</strong>
+            <div>
+              <span>{{ df.nodes }} nodes</span>
+              <span :class="['status-chip', df.status]">{{ df.status }}</span>
+            </div>
           </div>
-          <time>{{ log.time }}</time>
-        </li>
-      </ul>
-    </article>
+        </div>
+      </article>
 
-    <article class="panel visualization-panel throughput-panel">
-      <div class="panel-header">
-        <div>
-          <h2>数据流吞吐预览</h2>
-          <p>这里不是空白区，而是预留给真实 runtime metrics 的可视化区域。</p>
+      <article class="panel">
+        <div class="panel-header">
+          <h2>Recent Runtime Logs</h2>
+          <span :class="['pill', runtimeStatus === 'running' ? 'success' : '']">
+            {{ runtimeStatus === 'running' ? 'streaming' : 'idle' }}
+          </span>
         </div>
-        <span class="pill">Mock chart</span>
-      </div>
-      <div class="line-chart" aria-label="mock throughput chart">
-        <span
-          v-for="(value, index) in throughputSeries"
-          :key="`throughput-${index}`"
-          :style="{ height: `${value}px` }"
-        ></span>
-      </div>
-      <div class="chart-footer">
-        <span>消息吞吐</span>
-        <strong>148 msg/s 峰值</strong>
-      </div>
-    </article>
-
-    <article class="panel visualization-panel resource-panel">
-      <div class="panel-header">
-        <div>
-          <h2>节点资源占用</h2>
-          <p>后续会接入 Dora NodeInfo 中的 CPU、内存和 pending message。</p>
+        <div v-if="runtimeStatus !== 'running'" class="empty-state">
+          No dataflow is running. Start one from Run &amp; Monitor to see live logs.
         </div>
-        <span class="pill warning">预留</span>
-      </div>
-      <div class="bar-list">
-        <div v-for="bar in resourceBars" :key="bar.label" class="bar-row">
-          <span>{{ bar.label }}</span>
-          <div><i :style="{ width: `${bar.value}%` }"></i></div>
-          <b>{{ bar.value }}%</b>
-        </div>
-      </div>
-    </article>
-
-    <article class="panel visualization-panel debug-panel">
-      <div class="panel-header">
-        <div>
-          <h2>未来 Debug / 数据工作流入口</h2>
-          <p>用于承接 topic preview、trace timeline、record/replay 和训练数据导出。</p>
-        </div>
-        <span class="pill">Roadmap</span>
-      </div>
-      <div class="debug-roadmap">
-        <div><strong>Topic Preview</strong><span>查看关键 topic payload</span></div>
-        <div><strong>Trace Timeline</strong><span>定位跨节点延迟</span></div>
-        <div><strong>Dataset Recorder</strong><span>采集训练数据</span></div>
-        <div><strong>Replay</strong><span>回放并复现实验</span></div>
-      </div>
-    </article>
+        <ul v-else-if="recentLogs.length > 0" class="event-list large-events">
+          <li v-for="log in recentLogs" :key="`${log.timestamp}-${log.node}`">
+            <span :class="['dot', log.level]"></span>
+            <div>
+              <strong>{{ log.node }}</strong>
+              <p>{{ log.message }}</p>
+            </div>
+            <time>{{ log.time }}</time>
+          </li>
+        </ul>
+        <div v-else class="empty-state">Waiting for log output...</div>
+      </article>
+    </div>
   </section>
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
-import { getLogs, getSystemStatus, type ApiSource } from '../api'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import {
-  logs as fallbackLogs,
-  resourceBars,
-  systemStatus as fallbackSystem,
-  throughputSeries,
-  type StudioLog,
-} from '../data/mockStudio'
+  getCoordinatorStatus,
+  getDvizStatus,
+  getMoveitStatus,
+  getRuntimeLogs,
+  getRuntimeStatus,
+  getSystemStatus,
+  type CoordinatorDataflowResponse,
+  type DvizStatusResponse,
+  type MoveitStatusResponse,
+} from '../api'
 
-const system = ref(fallbackSystem)
-const logs = ref<StudioLog[]>(fallbackLogs)
-const apiSource = ref<ApiSource>('fallback')
-const apiSourceText = computed(() => (apiSource.value === 'connected' ? 'API connected' : 'Using mock fallback'))
+const coordinatorConnected = ref(false)
+const coordinatorVersion = ref('')
+const coordinatorDataflows = ref<CoordinatorDataflowResponse[]>([])
+const runtimeStatus = ref('stopped')
+const runtimeLastMessage = ref('')
+const dviz = ref<DvizStatusResponse>({ installed: false, running: false, binaryPath: null, message: 'Checking...' })
+const moveit = ref<MoveitStatusResponse>({ installed: false, running: false, message: 'Checking...' })
+const recentLogs = ref<{ time: string; timestamp: string; node: string; level: string; message: string }[]>([])
 
-onMounted(async () => {
-  const [systemResult, logsResult] = await Promise.all([
-    getSystemStatus(fallbackSystem),
-    getLogs('robot-perception-demo', fallbackLogs),
+const runtimeStatusText = computed(() => {
+  if (runtimeStatus.value === 'running') return 'Running'
+  if (runtimeStatus.value === 'failed') return 'Failed'
+  return 'Stopped'
+})
+
+const emptyStatus = { coordinator: '', daemon: '', version: '', runningDataflows: 0, activeNodes: 0, errorCount: 0 } as const
+
+let refreshTimer: number | undefined
+
+async function refreshDashboard() {
+  const [sysResult, coordResult, rtResult, logResult, dvizResult, moveitResult] = await Promise.all([
+    getSystemStatus(emptyStatus),
+    getCoordinatorStatus({ connected: false, version: '', runningDataflows: 0, activeNodes: 0, dataflows: [] }),
+    getRuntimeStatus({ status: 'stopped', pid: null, lastMessage: '', dataflowId: null, dataflowPath: null }),
+    getRuntimeLogs([]),
+    getDvizStatus({ installed: false, running: false, binaryPath: null, message: 'Unable to check dviz status.' }),
+    getMoveitStatus({ installed: false, running: false, message: 'Unable to check moveit status.' }),
   ])
 
-  system.value = systemResult.data
-  logs.value = logsResult.data
-  apiSource.value = systemResult.source === 'connected' || logsResult.source === 'connected' ? 'connected' : 'fallback'
+  coordinatorConnected.value = sysResult.source === 'connected' && sysResult.data.coordinator === 'connected'
+  coordinatorVersion.value = sysResult.data.version
+
+  if (coordResult.source === 'connected') {
+    coordinatorDataflows.value = coordResult.data.dataflows
+  }
+
+  runtimeStatus.value = rtResult.data.status
+  runtimeLastMessage.value = rtResult.data.lastMessage
+
+  dviz.value = dvizResult.data
+  moveit.value = moveitResult.data
+
+  if (logResult.source === 'connected') {
+    recentLogs.value = logResult.data.slice(-5).reverse()
+  }
+}
+
+onMounted(async () => {
+  await refreshDashboard()
+  refreshTimer = window.setInterval(refreshDashboard, 5000)
+})
+
+onUnmounted(() => {
+  if (refreshTimer) window.clearInterval(refreshTimer)
 })
 </script>
+
+<style scoped>
+.empty-state {
+  color: #94a3b8;
+  font-size: 15px;
+  line-height: 1.6;
+  padding: 28px 0;
+  text-align: center;
+}
+
+[data-theme="dark"] .empty-state {
+  color: #64748b;
+}
+
+.coordinator-flow-list {
+  display: grid;
+  gap: 8px;
+}
+
+.coordinator-flow-item {
+  align-items: center;
+  background: #f8fafd;
+  border: 1px solid #edf2f8;
+  border-radius: 14px;
+  display: flex;
+  justify-content: space-between;
+  padding: 14px 18px;
+}
+
+.coordinator-flow-item strong {
+  font-size: 16px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.coordinator-flow-item div {
+  align-items: center;
+  display: flex;
+  flex-shrink: 0;
+  gap: 12px;
+}
+
+.coordinator-flow-item div > span {
+  color: #64748b;
+  font-size: 14px;
+}
+
+[data-theme="dark"] .coordinator-flow-item {
+  background: #0f172a;
+  border-color: #334155;
+}
+
+[data-theme="dark"] .coordinator-flow-item div > span {
+  color: #94a3b8;
+}
+</style>

@@ -1,7 +1,6 @@
 mod coordinator;
 mod dataflows;
 mod external;
-mod mock;
 mod models;
 mod runtime;
 
@@ -111,7 +110,14 @@ async fn system_status() -> Json<models::SystemStatus> {
             error_count: 0,
         })
     } else {
-        Json(mock::system_status())
+        Json(models::SystemStatus {
+            coordinator: "unavailable".to_string(),
+            daemon: "unavailable".to_string(),
+            version: String::new(),
+            running_dataflows: 0,
+            active_nodes: 0,
+            error_count: 0,
+        })
     }
 }
 
@@ -163,10 +169,27 @@ async fn moveit_snapshot() -> Json<models::MoveitSnapshotResponse> {
     Json(external::query_moveit_snapshot())
 }
 
-async fn dataflows() -> Result<Json<Vec<models::DataflowSummary>>, ApiError> {
-    dataflows::list_dataflows()
-        .map(Json)
-        .map_err(ApiError::from)
+async fn dataflows(
+    State(runtime): State<runtime::RuntimeHandle>,
+) -> Result<Json<Vec<models::DataflowSummary>>, ApiError> {
+    let mut dataflows = dataflows::list_dataflows().map_err(ApiError::from)?;
+    let rt = runtime.status().await;
+    let coord = coordinator::query_coordinator().await;
+
+    for df in &mut dataflows {
+        if rt.status == "running" && rt.dataflow_id.as_deref() == Some(&df.id) {
+            df.status = "running".to_string();
+        } else if coord.connected {
+            for cdf in &coord.dataflows {
+                if cdf.status == "running"
+                    && (df.name.contains(&cdf.name) || cdf.name.contains(&df.name))
+                {
+                    df.status = "running".to_string();
+                }
+            }
+        }
+    }
+    Ok(Json(dataflows))
 }
 
 async fn dataflow_definition(
@@ -186,47 +209,35 @@ async fn dataflow_nodes(
     if state.status == "running" && state.dataflow_id.as_deref() == Some(&id) {
         for node in &mut metrics {
             node.status = "running".to_string();
-            match node.id.as_str() {
-                "camera" => {
-                    node.cpu = 18;
-                    node.memory = 164;
-                    node.pending = 3;
-                }
-                "detector" => {
-                    node.status = "degraded".to_string();
-                    node.cpu = 61;
-                    node.memory = 512;
-                    node.restarts = 1;
-                    node.pending = 17;
-                }
-                "planner" => {
-                    node.cpu = 22;
-                    node.memory = 210;
-                    node.pending = 5;
-                }
-                "logger" => {
-                    node.cpu = 12;
-                    node.memory = 340;
-                    node.pending = 7;
-                }
-                "robot_bridge" => {
-                    node.cpu = 7;
-                    node.memory = 86;
-                    node.pending = 0;
-                }
-                _ => {}
-            }
         }
     }
     Ok(Json(metrics))
 }
 
-async fn dataflow_logs(Path(_id): Path<String>) -> Json<Vec<models::LogEntry>> {
-    Json(mock::logs())
+async fn dataflow_logs(
+    Path(id): Path<String>,
+    State(runtime): State<runtime::RuntimeHandle>,
+) -> Json<Vec<models::LogEntry>> {
+    let state = runtime.status().await;
+    if state.status == "running" && state.dataflow_id.as_deref() == Some(&id) {
+        Json(runtime.logs().await)
+    } else {
+        Json(Vec::new())
+    }
 }
 
-async fn dataflow_graph(Path(id): Path<String>) -> Result<Json<models::DataflowGraph>, ApiError> {
-    dataflows::graph(&id).map(Json).map_err(ApiError::from)
+async fn dataflow_graph(
+    Path(id): Path<String>,
+    State(runtime): State<runtime::RuntimeHandle>,
+) -> Result<Json<models::DataflowGraph>, ApiError> {
+    let mut graph = dataflows::graph(&id).map_err(ApiError::from)?;
+    let state = runtime.status().await;
+    if state.status == "running" && state.dataflow_id.as_deref() == Some(&id) {
+        for node in &mut graph.nodes {
+            node.status = "running".to_string();
+        }
+    }
+    Ok(Json(graph))
 }
 
 async fn runtime_status(

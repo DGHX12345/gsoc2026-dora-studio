@@ -2,13 +2,11 @@
   <section class="view-stack">
     <div class="panel log-toolbar large-action-panel">
       <div>
-        <p class="eyebrow">Logs & Events</p>
-        <h2>运行信号中心</h2>
-        <p class="muted">这里会轮询 backend runtime logs，用真实 dora run 输出测试日志分区。</p>
+        <p class="eyebrow">Logs &amp; Events</p>
+        <h2>Runtime Logs</h2>
+        <p class="muted">Live stdout and stderr from the running dataflow process.</p>
       </div>
       <div class="filter-row">
-        <span>全部节点</span>
-        <span>三类分区</span>
         <span :class="apiSource === 'connected' ? 'api-connected' : 'api-fallback'">{{ apiSourceText }}</span>
       </div>
     </div>
@@ -18,16 +16,19 @@
         <div class="log-level-header">
           <div>
             <span class="log-icon">i</span>
-            <h2>常规日志</h2>
-            <p>正常运行事件和数据流进展。</p>
+            <h2>Info</h2>
+            <p>Normal operation and progress events.</p>
           </div>
           <strong>{{ groupedLogs.info.length }}</strong>
         </div>
-        <div class="log-list">
+        <div v-if="groupedLogs.info.length === 0" class="empty-log-panel">
+          No info logs yet.
+        </div>
+        <div v-else class="log-list">
           <LogLine v-for="log in previewLogs.info" :key="logKey(log)" :log="log" variant="level" />
         </div>
         <button v-if="groupedLogs.info.length > previewLimit" class="view-all-button info" @click="openLogModal('info')">
-          查看全部日志
+          View all info logs
         </button>
       </article>
 
@@ -35,41 +36,50 @@
         <div class="log-level-header">
           <div>
             <span class="log-icon">!</span>
-            <h2>警告日志</h2>
-            <p>需要关注但尚未中断运行的异常趋势。</p>
+            <h2>Warnings</h2>
+            <p>Anomalies worth attention but not yet breaking execution.</p>
           </div>
           <strong>{{ groupedLogs.warn.length }}</strong>
         </div>
-        <div class="log-list">
+        <div v-if="groupedLogs.warn.length === 0" class="empty-log-panel">
+          No warnings yet.
+        </div>
+        <div v-else class="log-list">
           <LogLine v-for="log in previewLogs.warn" :key="logKey(log)" :log="log" variant="level" />
         </div>
         <button v-if="groupedLogs.warn.length > previewLimit" class="view-all-button warn" @click="openLogModal('warn')">
-          查看全部日志
+          View all warnings
         </button>
       </article>
 
       <article class="log-level-panel error-panel">
         <div class="log-level-header">
           <div>
-            <span class="log-icon">×</span>
-            <h2>错误日志</h2>
-            <p>影响链路输出或需要立即定位的问题。</p>
+            <span class="log-icon">&times;</span>
+            <h2>Errors</h2>
+            <p>Issues affecting output or requiring immediate attention.</p>
           </div>
           <strong>{{ groupedLogs.error.length }}</strong>
         </div>
-        <div class="log-list">
+        <div v-if="groupedLogs.error.length === 0" class="empty-log-panel">
+          No errors yet.
+        </div>
+        <div v-else class="log-list">
           <LogLine v-for="log in previewLogs.error" :key="logKey(log)" :log="log" variant="level" />
         </div>
         <button v-if="groupedLogs.error.length > previewLimit" class="view-all-button error" @click="openLogModal('error')">
-          查看全部日志
+          View all errors
         </button>
       </article>
     </div>
 
     <article class="panel terminal-panel large-terminal compact-terminal">
       <div class="panel-header">
-        <h2>原始合并流</h2>
-        <button v-if="logs.length > previewLimit" class="terminal-view-all" @click="openLogModal('all')">查看全部日志</button>
+        <h2>Raw Stream</h2>
+        <button v-if="logs.length > previewLimit" class="terminal-view-all" @click="openLogModal('all')">View all</button>
+      </div>
+      <div v-if="logs.length === 0" class="empty-terminal">
+        No log output yet. Start a dataflow from Run &amp; Monitor to see logs here.
       </div>
       <LogLine v-for="log in previewAllLogs" :key="logKey(log)" :log="log" variant="terminal" />
     </article>
@@ -81,9 +91,9 @@
             <div>
               <p class="eyebrow">Logs Detail</p>
               <h2>{{ modalTitle }}</h2>
-              <span>{{ modalLogs.length }} 条日志</span>
+              <span>{{ modalLogs.length }} entries</span>
             </div>
-            <button class="secondary" @click="closeLogModal">关闭</button>
+            <button class="secondary" @click="closeLogModal">Close</button>
           </div>
           <div class="log-modal-list">
             <LogLine v-for="log in modalLogs" :key="logKey(log)" :log="log" variant="terminal" />
@@ -91,51 +101,26 @@
         </section>
       </div>
     </Teleport>
-
-    <div class="split-grid">
-      <article class="panel">
-        <div class="panel-header">
-          <h2>当前调试重点</h2>
-          <span class="pill warning">队列</span>
-        </div>
-        <p class="muted">
-          detector 节点处于退化状态，因为 pending messages 持续增长。警告区会优先暴露这种趋势，错误区只保留真正影响输出链路的问题。
-        </p>
-      </article>
-
-      <article class="panel">
-        <div class="panel-header">
-          <h2>后续扩展入口</h2>
-          <span class="pill">预留</span>
-        </div>
-        <div class="hook-list">
-          <span>Trace 时间线</span>
-          <span>Topic 预览</span>
-          <span>数据集记录</span>
-          <span>训练导出</span>
-        </div>
-      </article>
-    </div>
   </section>
 </template>
 
 <script setup lang="ts">
 import { computed, defineComponent, h, onMounted, onUnmounted, ref, type PropType } from 'vue'
 import { getRuntimeLogs, type ApiSource } from '../api'
-import { logs as fallbackLogs, type LogLevel, type StudioLog } from '../data/mockStudio'
+import { type LogLevel, type StudioLog } from '../data/mockStudio'
 
 type ModalType = LogLevel | 'all'
 
 const previewLimit = 5
-const logs = ref<StudioLog[]>(fallbackLogs)
+const logs = ref<StudioLog[]>([])
 const modalType = ref<ModalType | null>(null)
 const apiSource = ref<ApiSource>('fallback')
-const apiSourceText = computed(() => (apiSource.value === 'connected' ? 'API connected' : 'Using mock fallback'))
+const apiSourceText = computed(() => (apiSource.value === 'connected' ? 'API connected' : 'Backend unavailable'))
 
 const levelText: Record<LogLevel, string> = {
-  info: '信息',
-  warn: '警告',
-  error: '错误',
+  info: 'INFO',
+  warn: 'WARN',
+  error: 'ERROR',
 }
 
 const LogLine = defineComponent({
@@ -190,10 +175,10 @@ const previewLogs = computed<Record<LogLevel, StudioLog[]>>(() => ({
 const previewAllLogs = computed(() => latest(logs.value))
 const modalLogs = computed(() => (modalType.value === 'all' ? logs.value : modalType.value ? groupedLogs.value[modalType.value] : []))
 const modalTitle = computed(() => {
-  if (modalType.value === 'info') return '全部常规日志'
-  if (modalType.value === 'warn') return '全部警告日志'
-  if (modalType.value === 'error') return '全部错误日志'
-  return '全部原始合并流'
+  if (modalType.value === 'info') return 'All Info Logs'
+  if (modalType.value === 'warn') return 'All Warning Logs'
+  if (modalType.value === 'error') return 'All Error Logs'
+  return 'All Raw Stream'
 })
 
 let refreshTimer: number | undefined
@@ -215,11 +200,9 @@ function closeLogModal() {
 }
 
 async function refreshLogs() {
-  const result = await getRuntimeLogs(fallbackLogs)
+  const result = await getRuntimeLogs([])
   if (result.source === 'connected') {
     logs.value = result.data
-  } else {
-    logs.value = fallbackLogs
   }
   apiSource.value = result.source
 }
@@ -233,3 +216,51 @@ onUnmounted(() => {
   if (refreshTimer) window.clearInterval(refreshTimer)
 })
 </script>
+
+<style scoped>
+.empty-log-panel {
+  color: #94a3b8;
+  font-size: 14px;
+  padding: 18px;
+  text-align: center;
+}
+
+.empty-terminal {
+  color: #64748b;
+  font-family: "JetBrains Mono", "Fira Code", monospace;
+  font-size: 14px;
+  padding: 28px 16px;
+  text-align: center;
+}
+
+[data-theme="dark"] .empty-log-panel {
+  color: #64748b;
+}
+
+.log-toolbar {
+  flex-wrap: wrap;
+  gap: 14px;
+}
+
+.log-toolbar > div:first-child {
+  min-width: 0;
+}
+
+.log-level-grid {
+  min-width: 0;
+}
+
+.log-level-panel {
+  min-width: 0;
+  overflow: hidden;
+}
+
+.compact-terminal {
+  min-width: 0;
+  overflow: auto;
+}
+
+.terminal-panel :deep(.log-line) {
+  min-width: 600px;
+}
+</style>
