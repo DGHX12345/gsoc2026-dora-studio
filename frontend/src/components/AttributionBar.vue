@@ -1,11 +1,17 @@
 <script setup lang="ts">
 import { computed, onUnmounted, ref, watch } from 'vue'
 import {
+  autodetectLerobotProfile,
   getAttributionChain,
   getAttributionSummary,
+  getLerobotAttribution,
+  getLerobotProfiles,
+  scanLerobotDataset,
   type AttributionChainResponse,
   type AttributionStepResponse,
   type AttributionSummaryResponse,
+  type LerobotDatasetResponse,
+  type LerobotProfileResponse,
 } from '../api'
 import { useI18n } from '../i18n'
 
@@ -16,6 +22,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   'seek-timestamp': [timestampNs: number]
+  'apply-action': [vector: number[]]
 }>()
 
 const { t } = useI18n()
@@ -32,6 +39,20 @@ const selectedTs = ref<number | null>(null)
 const detail = ref<AttributionChainResponse | null>(null)
 const detailLoading = ref(false)
 const detailError = ref<string | null>(null)
+
+// --- LeRobot source state (M10) ---
+const lerobotPath = ref('')
+const lerobotScanning = ref(false)
+const lerobotError = ref<string | null>(null)
+const dataset = ref<LerobotDatasetResponse | null>(null)
+const profiles = ref<LerobotProfileResponse[]>([])
+const selectedProfile = ref('')
+const selectedEpisode = ref<number | null>(null)
+const pageOffset = ref(0)
+const pageSize = 200
+const lerobotTotal = ref(0)
+const lerobotChains = ref<AttributionChainResponse[]>([])
+const lerobotSummaries = ref<{ timestampNanos: number; success: boolean | null; stepCount: number }[]>([])
 
 const expandedText = ref<Record<string, boolean>>({})
 
@@ -71,7 +92,16 @@ watch(() => props.recordingId, () => {
   loadSummary()
 }, { immediate: true })
 
-const chains = computed(() => summary.value?.chains ?? [])
+watch(source, () => {
+  selectedTs.value = null
+  detail.value = null
+  detailError.value = null
+  stopTokenStream()
+})
+
+const chains = computed(() => (
+  source.value === 'lerobot' ? lerobotSummaries.value : summary.value?.chains ?? []
+))
 
 const selectedIndex = computed(() => {
   if (selectedTs.value === null) return -1
@@ -94,6 +124,11 @@ async function selectChain(ts: number, seek = false) {
   detailError.value = null
   expandedText.value = {}
   stopTokenStream()
+  if (source.value === 'lerobot') {
+    detail.value = lerobotChains.value.find((c) => c.timestampNanos === ts) ?? null
+    detailError.value = detail.value ? null : 'chain not found in loaded page'
+    return
+  }
   if (seek) emit('seek-timestamp', ts)
   detailLoading.value = true
   try {
@@ -112,6 +147,68 @@ function moveChain(dir: 1 | -1) {
   const next = idx + dir
   if (next < 0 || next >= chains.value.length) return
   selectChain(chains.value[next].timestampNanos, true)
+}
+
+// --- LeRobot source actions (M10) ---
+
+async function runLerobotScan() {
+  if (!lerobotPath.value) return
+  lerobotScanning.value = true
+  lerobotError.value = null
+  try {
+    dataset.value = await scanLerobotDataset(lerobotPath.value)
+    const [profilesResult, autodetectResult] = await Promise.all([
+      getLerobotProfiles(),
+      autodetectLerobotProfile(lerobotPath.value).catch(() => null),
+    ])
+    profiles.value = profilesResult.profiles
+    selectedProfile.value = autodetectResult?.suggestedProfile ?? profiles.value[0]?.name ?? ''
+    selectedEpisode.value = dataset.value.episodes[0]?.index ?? null
+    pageOffset.value = 0
+    await loadLerobotEpisode()
+  } catch (e) {
+    lerobotError.value = e instanceof Error ? e.message : 'scan failed'
+    dataset.value = null
+  } finally {
+    lerobotScanning.value = false
+  }
+}
+
+async function loadLerobotEpisode() {
+  if (!dataset.value || selectedEpisode.value === null) return
+  lerobotError.value = null
+  try {
+    const result = await getLerobotAttribution(
+      lerobotPath.value, selectedEpisode.value, pageOffset.value, pageSize,
+      selectedProfile.value || undefined,
+    )
+    lerobotChains.value = result.chains
+    lerobotSummaries.value = result.summaries
+    lerobotTotal.value = result.total
+    selectedTs.value = null
+    detail.value = null
+    stopTokenStream()
+  } catch (e) {
+    lerobotError.value = e instanceof Error ? e.message : 'load failed'
+  }
+}
+
+async function lerobotPage(dir: 1 | -1) {
+  const next = pageOffset.value + dir * pageSize
+  if (next < 0 || next >= lerobotTotal.value) return
+  pageOffset.value = next
+  await loadLerobotEpisode()
+}
+
+function onShowIn3d() {
+  if (selectedTs.value === null) return
+  if (source.value === 'lerobot') {
+    const action = detail.value?.steps.find((s) => s.kind === 'parsedAction')
+    if (action?.kind === 'parsedAction') emit('apply-action', action.vector)
+  } else {
+    emit('seek-timestamp', selectedTs.value)
+  }
+  collapsed.value = true
 }
 
 // --- Token stream (simulated 50 tokens/sec over the recorded text) ---
@@ -164,7 +261,7 @@ onUnmounted(stopTokenStream)
 
 const sourceOptions = computed(() => [
   { value: 'drec' as AttributionSource, label: t.value.attribution.sourceDrec, disabled: false, hint: '' },
-  { value: 'lerobot' as AttributionSource, label: t.value.attribution.sourceLerobot, disabled: true, hint: t.value.attribution.sourceLerobotHint },
+  { value: 'lerobot' as AttributionSource, label: t.value.attribution.sourceLerobot, disabled: false, hint: '' },
   { value: 'live' as AttributionSource, label: t.value.attribution.sourceLive, disabled: true, hint: t.value.attribution.sourceLiveHint },
 ])
 
@@ -204,13 +301,56 @@ const currentSourceHint = computed(() => (
     <div v-show="!collapsed" class="attr-body">
       <!-- Loading / error / empty states -->
       <div v-if="summaryLoading" class="attr-state">…</div>
-      <div v-else-if="summaryError" class="attr-state error">{{ summaryError }}</div>
+      <div v-else-if="source === 'drec' && summaryError" class="attr-state error">{{ summaryError }}</div>
       <div v-else-if="!chains.length" class="attr-state empty">
-        <strong>{{ t.attribution.empty }}</strong>
-        <span>{{ t.attribution.emptyHint }}</span>
+        <strong>{{ source === 'lerobot' ? t.attribution.datasetScanFailed : t.attribution.empty }}</strong>
+        <span>{{ source === 'lerobot' ? `${t.attribution.datasetPath} → ${t.attribution.scan}` : t.attribution.emptyHint }}</span>
       </div>
 
       <template v-else>
+        <!-- LeRobot controls (M10) -->
+        <div v-if="source === 'lerobot'" class="attr-lerobot">
+          <div class="attr-lerobot-row">
+            <input
+              v-model="lerobotPath"
+              class="attr-lerobot-path"
+              :placeholder="'/path/to/dataset (e.g. ~/.cache/huggingface/lerobot/my_org/b601_pilot_v1)'"
+              @keyup.enter="runLerobotScan"
+            />
+            <button class="attr-cta" type="button" :disabled="lerobotScanning" @click="runLerobotScan">
+              {{ lerobotScanning ? t.attribution.scanning : t.attribution.scan }}
+            </button>
+          </div>
+          <div v-if="lerobotError" class="attr-state error">{{ lerobotError }}</div>
+          <div v-if="dataset" class="attr-lerobot-info">
+            <span class="attr-chip">{{ dataset.name }}</span>
+            <span class="attr-chip">{{ dataset.layout }}</span>
+            <span class="attr-chip">{{ dataset.episodes.length }} {{ t.attribution.episodes }}</span>
+            <span class="attr-chip mono">{{ dataset.columns.length }} cols</span>
+          </div>
+          <div v-if="dataset" class="attr-lerobot-row">
+            <label class="attr-source">
+              <span class="attr-source-label">{{ t.attribution.profile }}</span>
+              <select v-model="selectedProfile" class="attr-source-select" @change="pageOffset = 0; loadLerobotEpisode()">
+                <option v-for="p in profiles" :key="p.name" :value="p.name">{{ p.robot }} ({{ p.name }})</option>
+              </select>
+            </label>
+            <label class="attr-source">
+              <span class="attr-source-label">Episode</span>
+              <select v-model="selectedEpisode" class="attr-source-select" @change="pageOffset = 0; loadLerobotEpisode()">
+                <option v-for="e in dataset.episodes" :key="e.index" :value="e.index">
+                  #{{ e.index }} · {{ e.rows }} {{ t.attribution.frames }}
+                </option>
+              </select>
+            </label>
+            <span class="attr-detail-spacer"></span>
+            <button v-if="lerobotTotal > pageSize" class="attr-nav" type="button" :disabled="pageOffset === 0" @click="lerobotPage(-1)">‹</button>
+            <span v-if="lerobotTotal > pageSize" class="attr-chip">
+              {{ t.attribution.page }} {{ pageOffset / pageSize + 1 }} {{ t.attribution.of }} {{ Math.ceil(lerobotTotal / pageSize) }}
+            </span>
+            <button v-if="lerobotTotal > pageSize" class="attr-nav" type="button" :disabled="pageOffset + pageSize >= lerobotTotal" @click="lerobotPage(1)">›</button>
+          </div>
+        </div>
         <!-- Icon chain strip -->
         <div class="attr-strip" role="list">
           <button
@@ -221,7 +361,7 @@ const currentSourceHint = computed(() => (
             :class="[
               'attr-tick',
               chain.success === null ? 'neutral' : chain.success ? 'ok' : 'fail',
-              { selected: selectedTs === chain.timestampNanos, nearest: i === nearestIndex },
+              { selected: selectedTs === chain.timestampNanos, nearest: source === 'drec' && i === nearestIndex },
             ]"
             :title="formatTime(chain.timestampNanos)"
             @click="selectChain(chain.timestampNanos)"
@@ -230,15 +370,16 @@ const currentSourceHint = computed(() => (
               <svg viewBox="0 0 12 12" class="attr-icon" aria-label="camera"><rect x="1.5" y="3" width="9" height="6.5" rx="1"/><circle cx="6" cy="6.2" r="1.8"/><path d="M4.5 3l.7-1.2h1.6L7.5 3"/></svg>
               <svg viewBox="0 0 12 12" class="attr-icon" aria-label="prompt"><rect x="1" y="2" width="10" height="7" rx="1.6"/><path d="M3 11l1.6-2H11"/></svg>
               <svg viewBox="0 0 12 12" class="attr-icon" aria-label="action"><circle cx="6" cy="6" r="2.1"/><path d="M6 1.2v1.4M6 9.4v1.4M1.2 6h1.4M9.4 6h1.4M2.6 2.6l1 1M8.4 8.4l1 1M9.4 2.6l-1 1M3.6 8.4l-1 1"/></svg>
-              <svg v-if="chain.success" viewBox="0 0 12 12" class="attr-icon ok" aria-label="ok"><path d="M2.2 6.4l2.6 2.6 5-5.2"/></svg>
-              <svg v-else viewBox="0 0 12 12" class="attr-icon fail" aria-label="fail"><path d="M3 3l6 6M9 3l-6 6"/></svg>
+              <svg v-if="chain.success === true" viewBox="0 0 12 12" class="attr-icon ok" aria-label="ok"><path d="M2.2 6.4l2.6 2.6 5-5.2"/></svg>
+              <svg v-else-if="chain.success === false" viewBox="0 0 12 12" class="attr-icon fail" aria-label="fail"><path d="M3 3l6 6M9 3l-6 6"/></svg>
+              <svg v-else viewBox="0 0 12 12" class="attr-icon" aria-label="no-result"><path d="M3 6h6"/></svg>
             </span>
             <span class="attr-tick-time">{{ formatTime(chain.timestampNanos) }}</span>
           </button>
         </div>
 
         <!-- Unparseable streams (honest reporting) -->
-        <div v-if="summary?.unparseableStreams.length" class="attr-unparseable">
+        <div v-if="source === 'drec' && summary?.unparseableStreams.length" class="attr-unparseable">
           <strong>{{ t.attribution.unparseable }}</strong>
           <span v-for="s in summary.unparseableStreams" :key="s.nodeId + s.outputId">
             {{ s.nodeId }}/{{ s.outputId }} — {{ s.reason }}
@@ -258,7 +399,7 @@ const currentSourceHint = computed(() => (
               {{ chains[selectedIndex]?.success ? t.attribution.success : t.attribution.failed }}
             </span>
             <span class="attr-detail-spacer"></span>
-            <button class="attr-cta" type="button" @click="emit('seek-timestamp', selectedTs); collapsed = true">
+            <button class="attr-cta" type="button" @click="onShowIn3d">
               {{ t.attribution.showIn3d }}
             </button>
             <button class="attr-close" type="button" @click="selectedTs = null; detail = null; stopTokenStream()">✕</button>
@@ -268,97 +409,112 @@ const currentSourceHint = computed(() => (
           <div v-else-if="detailError" class="attr-detail-body error">{{ t.attribution.noDetail }}: {{ detailError }}</div>
           <div v-else-if="detail" class="attr-detail-body">
             <!-- Step: SensorFrame -->
-            <div v-if="detail.steps[0]?.kind === 'sensorFrame'" class="attr-step">
+            <div class="attr-step">
               <span class="attr-step-num">1</span>
               <div class="attr-step-main">
                 <strong>{{ t.attribution.stepFrame }}</strong>
-                <div class="attr-chips">
-                  <span class="attr-chip mono">{{ detail.steps[0].topic }}</span>
-                  <span class="attr-chip">{{ detail.steps[0].width }} × {{ detail.steps[0].height }}</span>
-                  <span class="attr-chip">{{ detail.steps[0].encoding }}</span>
-                </div>
-                <small class="attr-note">image data not recorded — metadata only</small>
+                <template v-if="detail.steps[0]?.kind === 'sensorFrame'">
+                  <div class="attr-chips">
+                    <span class="attr-chip mono">{{ detail.steps[0].topic }}</span>
+                    <span class="attr-chip">{{ detail.steps[0].width }} × {{ detail.steps[0].height }}</span>
+                    <span class="attr-chip">{{ detail.steps[0].encoding }}</span>
+                  </div>
+                  <small class="attr-note">image data not recorded — metadata only</small>
+                </template>
+                <span v-else class="attr-unavailable">{{ t.attribution.notAvailable }}</span>
               </div>
             </div>
 
             <!-- Step: Prompt -->
-            <div v-if="detail.steps[1]?.kind === 'prompt'" class="attr-step">
+            <div class="attr-step">
               <span class="attr-step-num">2</span>
               <div class="attr-step-main">
                 <strong>{{ t.attribution.stepPrompt }}</strong>
-                <span class="attr-chip">{{ detail.steps[1].tokenCount }} {{ t.attribution.tokens }}</span>
-                <p class="attr-text">
-                  {{ textDisplay(detail.steps[1].text, 'prompt') }}
-                  <button v-if="detail.steps[1].text.length > 200" class="attr-text-toggle" type="button" @click="toggleText('prompt')">
-                    {{ isExpanded('prompt') ? t.attribution.collapseText : t.attribution.expandText }}
-                  </button>
-                </p>
+                <template v-if="detail.steps[1]?.kind === 'prompt'">
+                  <span class="attr-chip">{{ detail.steps[1].tokenCount }} {{ t.attribution.tokens }}</span>
+                  <p class="attr-text">
+                    {{ textDisplay(detail.steps[1].text, 'prompt') }}
+                    <button v-if="detail.steps[1].text.length > 200" class="attr-text-toggle" type="button" @click="toggleText('prompt')">
+                      {{ isExpanded('prompt') ? t.attribution.collapseText : t.attribution.expandText }}
+                    </button>
+                  </p>
+                </template>
+                <span v-else class="attr-unavailable">{{ t.attribution.notAvailable }}</span>
               </div>
             </div>
 
             <!-- Step: LLM response + token stream -->
-            <div v-if="detail.steps[2]?.kind === 'llmResponse'" class="attr-step">
+            <div class="attr-step">
               <span class="attr-step-num">3</span>
               <div class="attr-step-main">
                 <strong>{{ t.attribution.stepResponse }}</strong>
-                <div class="attr-chips">
-                  <span class="attr-chip">{{ detail.steps[2].tokenCount }} {{ t.attribution.tokens }}</span>
-                  <span class="attr-chip mono">{{ detail.steps[2].model }}</span>
-                  <span class="attr-chip">{{ t.attribution.latency }} {{ detail.steps[2].latencyMs }} ms</span>
-                </div>
-                <p class="attr-text">
-                  {{ textDisplay(detail.steps[2].text, 'response') }}
-                  <button v-if="detail.steps[2].text.length > 200" class="attr-text-toggle" type="button" @click="toggleText('response')">
-                    {{ isExpanded('response') ? t.attribution.collapseText : t.attribution.expandText }}
-                  </button>
-                </p>
+                <template v-if="detail.steps[2]?.kind === 'llmResponse'">
+                  <div class="attr-chips">
+                    <span class="attr-chip">{{ detail.steps[2].tokenCount }} {{ t.attribution.tokens }}</span>
+                    <span class="attr-chip mono">{{ detail.steps[2].model }}</span>
+                    <span class="attr-chip">{{ t.attribution.latency }} {{ detail.steps[2].latencyMs }} ms</span>
+                  </div>
+                  <p class="attr-text">
+                    {{ textDisplay(detail.steps[2].text, 'response') }}
+                    <button v-if="detail.steps[2].text.length > 200" class="attr-text-toggle" type="button" @click="toggleText('response')">
+                      {{ isExpanded('response') ? t.attribution.collapseText : t.attribution.expandText }}
+                    </button>
+                  </p>
 
-                <!-- D3: token stream viewer -->
-                <div class="attr-stream">
-                  <button class="attr-cta sm" type="button" :disabled="!responseStep || streamRunning" @click="startTokenStream">
-                    {{ streamRunning ? `${streamVisibleTokens}/${streamTotalTokens}` : t.attribution.replayStream }}
-                  </button>
-                  <span v-if="streamRunning" class="attr-stream-label">{{ t.attribution.tokenStream }} · 50 tok/s</span>
-                </div>
-                <div v-if="streamRunning || streamVisibleTokens > 0" class="attr-stream-box mono">
-                  {{ streamedText }}<span v-if="streamRunning" class="attr-caret">▌</span>
-                </div>
+                  <!-- D3: token stream viewer -->
+                  <div class="attr-stream">
+                    <button class="attr-cta sm" type="button" :disabled="!responseStep || streamRunning" @click="startTokenStream">
+                      {{ streamRunning ? `${streamVisibleTokens}/${streamTotalTokens}` : t.attribution.replayStream }}
+                    </button>
+                    <span v-if="streamRunning" class="attr-stream-label">{{ t.attribution.tokenStream }} · 50 tok/s</span>
+                  </div>
+                  <div v-if="streamRunning || streamVisibleTokens > 0" class="attr-stream-box mono">
+                    {{ streamedText }}<span v-if="streamRunning" class="attr-caret">▌</span>
+                  </div>
+                </template>
+                <span v-else class="attr-unavailable">{{ t.attribution.notAvailable }}</span>
               </div>
             </div>
 
             <!-- Step: ParsedAction -->
-            <div v-if="detail.steps[3]?.kind === 'parsedAction'" class="attr-step">
+            <div class="attr-step">
               <span class="attr-step-num">4</span>
               <div class="attr-step-main">
                 <strong>{{ t.attribution.stepAction }}</strong>
-                <div class="attr-chips">
-                  <span class="attr-chip mono">{{ detail.steps[3].actionType }}</span>
-                  <span class="attr-chip">{{ t.attribution.confidence }} {{ detail.steps[3].confidence != null ? (detail.steps[3].confidence * 100).toFixed(0) + '%' : 'n/a' }}</span>
-                </div>
-                <table class="attr-table">
-                  <tbody>
-                    <tr v-for="(v, i) in detail.steps[3].vector" :key="i">
-                      <td class="attr-table-idx">joint_{{ i + 1 }}</td>
-                      <td class="mono">{{ v.toFixed(3) }}</td>
-                    </tr>
-                  </tbody>
-                </table>
+                <template v-if="detail.steps[3]?.kind === 'parsedAction'">
+                  <div class="attr-chips">
+                    <span class="attr-chip mono">{{ detail.steps[3].actionType }}</span>
+                    <span class="attr-chip">{{ t.attribution.confidence }} {{ detail.steps[3].confidence != null ? (detail.steps[3].confidence * 100).toFixed(0) + '%' : 'n/a' }}</span>
+                  </div>
+                  <table class="attr-table">
+                    <tbody>
+                      <tr v-for="(v, i) in detail.steps[3].vector" :key="i">
+                        <td class="attr-table-idx">joint_{{ i + 1 }}</td>
+                        <td class="mono">{{ v.toFixed(3) }}</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </template>
+                <span v-else class="attr-unavailable">{{ t.attribution.notAvailable }}</span>
               </div>
             </div>
 
             <!-- Step: ExecutionResult -->
-            <div v-if="detail.steps[4]?.kind === 'executionResult'" class="attr-step">
+            <div class="attr-step">
               <span class="attr-step-num">5</span>
               <div class="attr-step-main">
                 <strong>{{ t.attribution.stepExecution }}</strong>
-                <span
-                  :class="['attr-status-pill', detail.steps[4].success ? 'ok' : 'fail']"
-                >
-                  {{ detail.steps[4].success ? t.attribution.success : t.attribution.failed }}
-                </span>
-                <p v-if="detail.steps[4].errorMessage" class="attr-error-text">
-                  {{ detail.steps[4].errorMessage }}
-                </p>
+                <template v-if="detail.steps[4]?.kind === 'executionResult'">
+                  <span
+                    :class="['attr-status-pill', detail.steps[4].success ? 'ok' : 'fail']"
+                  >
+                    {{ detail.steps[4].success ? t.attribution.success : t.attribution.failed }}
+                  </span>
+                  <p v-if="detail.steps[4].errorMessage" class="attr-error-text">
+                    {{ detail.steps[4].errorMessage }}
+                  </p>
+                </template>
+                <span v-else class="attr-unavailable">{{ t.attribution.notAvailable }}</span>
               </div>
             </div>
           </div>
@@ -574,6 +730,17 @@ const currentSourceHint = computed(() => (
 }
 .attr-caret { animation: attr-blink 0.9s steps(1) infinite; }
 @keyframes attr-blink { 50% { opacity: 0; } }
+
+/* LeRobot source controls (M10) */
+.attr-lerobot { display: flex; flex-direction: column; gap: 8px; }
+.attr-lerobot-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.attr-lerobot-path {
+  flex: 1; min-width: 280px; padding: 7px 10px; font-size: 12px; font-family: monospace;
+  background: var(--canvas-base); color: var(--text-body);
+  border: 1px solid var(--hairline); border-radius: 5px;
+}
+.attr-lerobot-info { display: flex; gap: 6px; flex-wrap: wrap; }
+.attr-unavailable { color: var(--text-muted-dark); font-size: 12px; font-style: italic; }
 
 .attr-panel.collapsed .attr-body { display: none; }
 </style>
