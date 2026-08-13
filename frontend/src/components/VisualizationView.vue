@@ -452,15 +452,14 @@ async function startReplay() {
   }
 }
 
-// M10: apply a LeRobot action vector to the live viewport (first 6 joints).
+// M10: apply a LeRobot action vector to the replay-mode viewport (first 6
+// joints). Stays in replay mode so the attribution panel remains mounted;
+// without an active .drec, replayJoints are the display pose.
 function applyActionVector(vector: number[]) {
-  viewportMode.value = 'live'
-  const joints = createNanoArmJointState()
-  const names: (keyof typeof joints)[] = ['joint1', 'joint2', 'joint3', 'joint4', 'joint5', 'joint6']
+  const names: (keyof RobotJointState)[] = ['joint_1', 'joint_2', 'joint_3', 'joint_4', 'joint_5', 'joint_6']
   names.forEach((name, i) => {
-    if (vector[i] !== undefined) joints[name] = vector[i]
+    if (vector[i] !== undefined) replayJoints[name] = vector[i]
   })
-  Object.assign(nanoArmJointState, joints)
 }
 
 function stopReplay() {
