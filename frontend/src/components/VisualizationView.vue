@@ -672,7 +672,18 @@ onMounted(loadVisualizationData)
   border-right: 1px solid var(--hairline);
   background: var(--canvas-base);
   transition: width 200ms ease, min-width 200ms ease;
+  /* Sidebar is machined-dark in both themes — keep text light on dark */
+  color: var(--text-body);
 }
+.viz-left h2, .viz-left h3 { color: var(--text-heading); }
+.viz-left .robot-profile-title strong,
+.viz-left .robot-module-chip strong,
+.viz-left .display-item strong,
+.viz-left .viz-data-state strong { color: var(--text-heading); }
+.viz-left .robot-module-chip small,
+.viz-left .viz-data-state span,
+.viz-left .viz-status-row,
+.viz-left .viz-section-source { color: var(--text-muted-dark); }
 .viz-left.collapsed {
   width: 44px; min-width: 44px;
 }
