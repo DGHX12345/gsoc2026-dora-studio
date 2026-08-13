@@ -367,8 +367,9 @@ impl DrecGenerator {
                     .unwrap(),
             });
 
-            // Flat [tx, ty] target point moving along the figure-8 waypoint path
-            let target = waypoints[(i * 3) % WAYPOINT_COUNT];
+            // Flat [tx, ty] target point stepping through the figure-8
+            // waypoint path (step 1 for a smooth full loop)
+            let target = waypoints[i % WAYPOINT_COUNT];
             entries.push(RecordEntry {
                 node_id: "planner".to_string(),
                 output_id: "target_point".to_string(),
@@ -605,9 +606,15 @@ mod tests {
         assert_eq!(costmap["resolution"].as_f64(), Some(0.1));
         let values = costmap["values"].as_array().unwrap();
         assert_eq!(values.len(), 576);
+        let mut max = 0.0_f64;
         for v in values {
-            assert!(v.as_f64().unwrap().is_finite());
+            let f = v.as_f64().unwrap();
+            assert!(f.is_finite());
+            assert!((0.0..=1.0).contains(&f));
+            max = max.max(f);
         }
+        // Non-degenerate: at least one obstacle peak reaches the clamp range
+        assert!(max > 0.5);
 
         // 5 frames → costmap only on frame 0 (i % 10 == 0)
         let costmap_count = entries
