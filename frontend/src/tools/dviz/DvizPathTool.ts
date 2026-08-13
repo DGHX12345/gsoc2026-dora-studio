@@ -10,6 +10,7 @@
 
 import {
   ConeGeometry,
+  DynamicDrawUsage,
   Group,
   InstancedMesh,
   Material,
@@ -129,7 +130,6 @@ export class DvizPathTool implements ViewportTool {
 
   onAttach(context: ToolContext) {
     if (this.context) return; // already attached: no-op
-    this.context = context;
 
     this.group = new Group();
     this.group.name = 'dviz-path';
@@ -142,6 +142,7 @@ export class DvizPathTool implements ViewportTool {
     this.group.add(this.targetMarker);
 
     context.scene.add(this.group);
+    this.context = context; // only after the scene add succeeds
     context.requestRender();
   }
 
@@ -194,6 +195,7 @@ export class DvizPathTool implements ViewportTool {
     this.targetMarkerMaterial = null;
     this.context = null;
     this.notify();
+    this.listeners.clear(); // no stale subscribers across attach cycles
   }
 
   subscribe(listener: () => void): () => void {
@@ -245,7 +247,9 @@ export class DvizPathTool implements ViewportTool {
   }
 
   private handlePath(batch: ToolBatch, outputId: string, points: number[]) {
-    if (points.length === 0 || !this.group) return; // empty parse: keep last known path
+    // Empty or non-triplet parses keep the last known path (parsers today
+    // always emit multiples of 3; the guard defends against future ones).
+    if (points.length === 0 || points.length % 3 !== 0 || !this.group) return;
     const key = `${batch.nodeId}/${outputId}`;
     let path = this.paths.get(key);
     if (!path) {
@@ -335,8 +339,11 @@ export class DvizPathTool implements ViewportTool {
 
   private updatePath(path: PathState, points: number[], timestampNs: number) {
     path.lineGeometry.setPositions(points);
-    // Line distances drive the dash rendering (required after every update).
-    path.line.computeLineDistances();
+    if (path.lineMaterial.dashed) {
+      // Line distances drive the dash rendering (only dashes need them;
+      // solid paths skip the per-batch distance attribute allocation).
+      path.line.computeLineDistances();
+    }
 
     if (path.startMarker && path.endMarker) {
       const last = points.length - 3;
@@ -353,17 +360,18 @@ export class DvizPathTool implements ViewportTool {
   /** Rebuild/sync the direction-arrow instance matrices; count 0 when idle. */
   private syncArrows(path: PathState, points: number[]) {
     const pointCount = Math.floor(points.length / 3);
-    const indices: number[] = [];
-    for (let i = ARROW_EVERY; i < pointCount - 1; i += ARROW_EVERY) {
-      indices.push(i);
-    }
-    const count = indices.length;
-
     let mesh = path.arrows;
     if (!mesh) return;
+
+    let count = 0;
+    for (let i = ARROW_EVERY; i < pointCount - 1; i += ARROW_EVERY) count += 1;
+
     if (count > path.arrowCapacity) {
-      const capacity = Math.max(count, 1);
+      // Amortized growth: double the capacity instead of sizing per batch.
+      const capacity = Math.max(count, path.arrowCapacity * 2, 1);
       const next = new InstancedMesh(path.arrowGeometry!, path.arrowMaterial!, capacity);
+      // Matrices are rewritten every batch: keep the buffer on the dynamic path.
+      next.instanceMatrix.setUsage(DynamicDrawUsage);
       path.group.remove(mesh);
       path.arrows = next;
       path.arrowCapacity = capacity;
@@ -376,8 +384,8 @@ export class DvizPathTool implements ViewportTool {
       return;
     }
 
-    for (let k = 0; k < count; k++) {
-      const i = indices[k];
+    let k = 0;
+    for (let i = ARROW_EVERY; i < pointCount - 1; i += ARROW_EVERY) {
       _pos.set(points[3 * i], points[3 * i + 1], points[3 * i + 2]);
       _dir.set(
         points[3 * (i + 1)] - points[3 * i],
@@ -389,6 +397,7 @@ export class DvizPathTool implements ViewportTool {
       _quat.setFromUnitVectors(_up, _dir);
       _matrix.compose(_pos, _quat, _scale);
       mesh.setMatrixAt(k, _matrix);
+      k += 1;
     }
     mesh.instanceMatrix.needsUpdate = true;
   }

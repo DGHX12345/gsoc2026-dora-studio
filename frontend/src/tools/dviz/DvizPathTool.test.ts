@@ -4,7 +4,7 @@
 // (including Line2/LineMaterial) works without a renderer.
 
 import assert from 'node:assert/strict';
-import { Group, Mesh, Scene } from 'three';
+import { Group, InstancedMesh, Mesh, Scene, SphereGeometry } from 'three';
 import { Line2 } from 'three/examples/jsm/lines/Line2.js';
 import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js';
 
@@ -47,6 +47,32 @@ const lineGeometryOf = (group: Group): Line2['geometry'] =>
 const firstPointOf = (geometry: Line2['geometry']): number[] => {
   const start = geometry.attributes.instanceStart.array as Float32Array;
   return [start[0], start[1], start[2]];
+};
+
+const arrowsOf = (group: Group): InstancedMesh =>
+  group.children.find((c): c is InstancedMesh => c instanceof InstancedMesh)!;
+
+/** Start/end markers are the SphereGeometry meshes of a primary path group.
+ * (Line2 extends Mesh in this three version, so geometry type disambiguates.) */
+const markerOf = (group: Group, index: number): Mesh =>
+  group.children.filter(
+    (c): c is Mesh => c instanceof Mesh && c.geometry instanceof SphereGeometry,
+  )[index];
+
+/** Assert a 3x3-identity-rotated arrow matrix landed at (x, y, z=0.05).
+ * instanceMatrix is an InstancedBufferAttribute (column-major, 16 floats per
+ * matrix); translation z rides a Float32Array: 0.05 is not exactly representable. */
+const assertArrowAt = (array: ArrayLike<number>, k: number, x: number, y: number) => {
+  const off = k * 16 + 12; // translation column
+  assert.deepEqual([array[off], array[off + 1]], [x, y]);
+  assert.ok(Math.abs(array[off + 2] - 0.05) < 1e-6, `arrow ${k} z is 0.05`);
+};
+
+/** Flat xy pairs for n waypoints at (i, 0). */
+const waypointXY = (n: number): number[] => {
+  const out: number[] = [];
+  for (let i = 0; i < n; i++) out.push(i, 0);
+  return out;
 };
 
 const tests: TestCase[] = [
@@ -339,6 +365,194 @@ const tests: TestCase[] = [
       assert.deepEqual(tool.getSnapshot(), { paths: [], target: null, lastSeekTs: null });
       tool.onDetach(); // must not throw
       assert.deepEqual(tool.getSnapshot(), { paths: [], target: null, lastSeekTs: null });
+    },
+  },
+  {
+    name: 'arrows: 25 waypoints yield 2 cones at waypoint indices 10 and 20',
+    run: () => {
+      const context = makeContext();
+      const tool = new DvizPathTool();
+      tool.onAttach(context);
+
+      tool.onBatch(batch('planner', 'waypoints', 100, f32(waypointXY(25))));
+
+      const arrows = arrowsOf(pathGroup(context, 'path:planner/waypoints'));
+      assert.equal(arrows.count, 2);
+      assert.equal(arrows.instanceMatrix.array.length, 2 * 16); // capacity 2
+      const e = arrows.instanceMatrix.array;
+      // k=0 → waypoint 10, k=1 → waypoint 20; waypoint 24 stays bare (i < n-1).
+      assertArrowAt(e, 0, 10, 0);
+      assertArrowAt(e, 1, 20, 0);
+      tool.onDetach();
+    },
+  },
+  {
+    name: 'arrows: capacity grows amortized (doubling) across increasing waypoint counts',
+    run: () => {
+      const context = makeContext();
+      const tool = new DvizPathTool();
+      tool.onAttach(context);
+      const group = () => pathGroup(context, 'path:planner/waypoints');
+
+      tool.onBatch(batch('planner', 'waypoints', 100, f32(waypointXY(25)))); // 2 arrows
+      assert.equal(arrowsOf(group()).count, 2);
+      assert.equal(arrowsOf(group()).instanceMatrix.array.length, 2 * 16);
+
+      tool.onBatch(batch('planner', 'waypoints', 200, f32(waypointXY(55)))); // 5 arrows
+      assert.equal(arrowsOf(group()).count, 5);
+      assert.equal(arrowsOf(group()).instanceMatrix.array.length, 5 * 16);
+
+      tool.onBatch(batch('planner', 'waypoints', 300, f32(waypointXY(85)))); // 8 arrows
+      assert.equal(arrowsOf(group()).count, 8);
+      // Amortized growth doubles the previous capacity (5 -> 10), not to 8.
+      assert.equal(arrowsOf(group()).instanceMatrix.array.length, 10 * 16);
+      tool.onDetach();
+    },
+  },
+  {
+    name: 'arrows: shrinking waypoint count keeps capacity and the correct count',
+    run: () => {
+      const context = makeContext();
+      const tool = new DvizPathTool();
+      tool.onAttach(context);
+
+      tool.onBatch(batch('planner', 'waypoints', 100, f32(waypointXY(25))));
+      const group = pathGroup(context, 'path:planner/waypoints');
+      // capacity 2 → 8: doubling gives 4 but 8 are needed (85 waypoints → 8 cones).
+      tool.onBatch(batch('planner', 'waypoints', 200, f32(waypointXY(85))));
+      const grown = arrowsOf(group);
+      assert.equal(grown.count, 8);
+      assert.equal(grown.instanceMatrix.array.length, 8 * 16);
+
+      tool.onBatch(batch('planner', 'waypoints', 300, f32(waypointXY(25)))); // shrink to 2
+      assert.equal(arrowsOf(group), grown); // no reallocation on shrink
+      assert.equal(arrowsOf(group).count, 2);
+      assert.equal(arrowsOf(group).instanceMatrix.array.length, 8 * 16); // capacity kept
+      assertArrowAt(arrowsOf(group).instanceMatrix.array, 0, 10, 0); // repositioned
+      tool.onDetach();
+    },
+  },
+  {
+    name: 'arrows: duplicate consecutive waypoints give a degenerate segment with cone +Y and no NaN',
+    run: () => {
+      const context = makeContext();
+      const tool = new DvizPathTool();
+      tool.onAttach(context);
+
+      // Waypoints 10 and 11 are both (7, 0): the segment at arrow 0 is degenerate.
+      const xy: number[] = [];
+      for (let i = 0; i < 25; i++) xy.push(i === 10 || i === 11 ? 7 : i, 0);
+      tool.onBatch(batch('planner', 'waypoints', 100, f32(xy)));
+
+      const arrows = arrowsOf(pathGroup(context, 'path:planner/waypoints'));
+      assert.equal(arrows.count, 2);
+      const e = arrows.instanceMatrix.array;
+      // k=0 (waypoint 10): identity rotation keeps the cone pointing +Y.
+      assert.deepEqual([e[0], e[5], e[10]], [1, 1, 1]);
+      assert.equal(e[1], 0); // no off-diagonal rotation
+      assert.deepEqual([e[12], e[13]], [7, 0]);
+      assert.ok(!e.some(Number.isNaN), 'arrow matrices contain no NaN');
+      tool.onDetach();
+    },
+  },
+  {
+    name: 'attach → detach → re-attach: one fresh dviz-path group and a populated snapshot',
+    run: () => {
+      const context = makeContext();
+      const tool = new DvizPathTool();
+      tool.onAttach(context);
+      tool.onBatch(batch('planner', 'waypoints', 100, f32([0, 0, 1, 1, 2, 0])));
+
+      assert.equal(context.scene.children.length, 1);
+      tool.onDetach();
+      assert.equal(context.scene.children.length, 0);
+      assert.deepEqual(tool.getSnapshot(), { paths: [], target: null, lastSeekTs: null });
+
+      tool.onAttach(context);
+      tool.onBatch(batch('planner', 'waypoints', 200, f32([5, 5, 6, 5, 7, 5])));
+
+      assert.equal(context.scene.children.length, 1);
+      assert.equal(rootGroup(context).name, 'dviz-path');
+      assert.equal(context.scene.children.filter((c) => c.name === 'dviz-path').length, 1);
+
+      const snapshot = tool.getSnapshot();
+      assert.equal(snapshot.paths.length, 1);
+      assert.equal(snapshot.paths[0].key, 'planner/waypoints');
+      assert.equal(snapshot.paths[0].pointCount, 3);
+      assert.equal(snapshot.paths[0].lastBatchTs, 200);
+      assert.equal(snapshot.paths[0].colorHex, 0x22d3ee);
+      assert.equal(
+        lineMaterialOf(pathGroup(context, 'path:planner/waypoints')).color.getHex(),
+        0x22d3ee,
+      );
+      tool.onDetach();
+    },
+  },
+  {
+    name: 'a hidden path stays hidden when a new batch arrives',
+    run: () => {
+      const context = makeContext();
+      const tool = new DvizPathTool();
+      tool.onAttach(context);
+
+      tool.onBatch(batch('planner', 'waypoints', 100, f32([0, 0, 1, 1, 2, 0])));
+      tool.setPathVisible('planner/waypoints', false);
+
+      tool.onBatch(batch('planner', 'waypoints', 200, f32([1, 1, 2, 1, 3, 1])));
+      assert.equal(pathGroup(context, 'path:planner/waypoints').visible, false);
+      assert.equal(tool.getSnapshot().paths[0].visible, false);
+      assert.equal(tool.getSnapshot().paths[0].lastBatchTs, 200); // data still updates
+      tool.onDetach();
+    },
+  },
+  {
+    name: 'a single-point path does not throw: empty line, overlapping markers, no arrows',
+    run: () => {
+      const context = makeContext();
+      const tool = new DvizPathTool();
+      tool.onAttach(context);
+
+      assert.doesNotThrow(() => {
+        tool.onBatch(batch('planner', 'waypoints', 100, f32([1, 2, 3])));
+      });
+
+      const snapshot = tool.getSnapshot();
+      assert.equal(snapshot.paths.length, 1);
+      assert.equal(snapshot.paths[0].pointCount, 1);
+
+      const group = pathGroup(context, 'path:planner/waypoints');
+      const start = markerOf(group, 0);
+      const end = markerOf(group, 1);
+      assert.deepEqual([start.position.x, start.position.y, start.position.z], [1, 2, 0.05]);
+      assert.deepEqual([end.position.x, end.position.y, end.position.z], [1, 2, 0.05]);
+      assert.equal(arrowsOf(group).count, 0);
+      // A single position yields no segments: the instance buffer stays empty.
+      assert.equal(lineGeometryOf(group).attributes.instanceStart.array.length, 0);
+      tool.onDetach();
+    },
+  },
+  {
+    name: 'output ids differing only in case collapse into one path key',
+    run: () => {
+      const context = makeContext();
+      const tool = new DvizPathTool();
+      tool.onAttach(context);
+
+      tool.onBatch(batch('planner', 'Waypoints', 100, f32([0, 0, 1, 1, 2, 0])));
+      tool.onBatch(batch('planner', 'waypoints', 200, f32([5, 5, 6, 5, 7, 5])));
+
+      const snapshot = tool.getSnapshot();
+      assert.equal(snapshot.paths.length, 1);
+      assert.equal(snapshot.paths[0].key, 'planner/waypoints');
+      assert.equal(snapshot.paths[0].pointCount, 3);
+      assert.equal(snapshot.paths[0].lastBatchTs, 200);
+
+      const named = rootGroup(context).children.filter((c) => c.name === 'path:planner/waypoints');
+      assert.equal(named.length, 1);
+      const first = firstPointOf(lineGeometryOf(pathGroup(context, 'path:planner/waypoints')));
+      assert.deepEqual([first[0], first[1]], [5, 5]);
+      assert.ok(Math.abs(first[2] - 0.05) < 1e-6);
+      tool.onDetach();
     },
   },
 ];
