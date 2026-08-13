@@ -570,7 +570,7 @@ export type AttributionStepResponse =
   | { kind: 'sensorFrame'; topic: string; width: number; height: number; encoding: string }
   | { kind: 'prompt'; text: string; tokenCount: number }
   | { kind: 'llmResponse'; text: string; tokenCount: number; model: string; latencyMs: number }
-  | { kind: 'parsedAction'; actionType: string; vector: number[]; confidence: number }
+  | { kind: 'parsedAction'; actionType: string; vector: number[]; confidence: number | null }
   | { kind: 'executionResult'; success: boolean; errorMessage: string | null }
 
 export type AttributionChainResponse = {
@@ -580,7 +580,7 @@ export type AttributionChainResponse = {
 
 export type AttributionChainSummaryResponse = {
   timestampNanos: number
-  success: boolean
+  success: boolean | null
   stepCount: number
 }
 

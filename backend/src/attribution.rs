@@ -13,7 +13,7 @@ use crate::drec::reader::DrecReader;
 use crate::drec::service::RecordingHandle;
 
 pub const MAGIC: &[u8; 8] = b"DORAATT\0";
-pub const VERSION: u16 = 1;
+pub const VERSION: u16 = 2;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ParseError {
@@ -64,7 +64,7 @@ pub enum AttributionStep {
     ParsedAction {
         action_type: String,
         vector: Vec<f32>,
-        confidence: f32,
+        confidence: Option<f32>,
     },
     ExecutionResult {
         success: bool,
@@ -138,7 +138,13 @@ impl AttributionEvent {
                 for v in vector {
                     out.extend_from_slice(&v.to_le_bytes());
                 }
-                out.extend_from_slice(&confidence.to_le_bytes());
+                match confidence {
+                    Some(c) => {
+                        out.push(1);
+                        out.extend_from_slice(&c.to_le_bytes());
+                    }
+                    None => out.push(0),
+                }
             }
             AttributionStep::ExecutionResult {
                 success,
@@ -203,7 +209,14 @@ impl AttributionEvent {
                     }
                     vector
                 },
-                confidence: cur.read_f32()?,
+                confidence: {
+                    let present = cur.read_u8()? != 0;
+                    if present {
+                        Some(cur.read_f32()?)
+                    } else {
+                        None
+                    }
+                },
             },
             5 => AttributionStep::ExecutionResult {
                 success: cur.read_u8()? != 0,
@@ -291,11 +304,22 @@ pub struct AttributionChain {
 }
 
 impl AttributionChain {
-    /// True unless an ExecutionResult step reports failure.
-    pub fn success(&self) -> bool {
-        self.steps
+    /// None when no ExecutionResult step is recorded (e.g. LeRobot frames);
+    /// otherwise Some(true) unless a result reports failure.
+    pub fn success(&self) -> Option<bool> {
+        let results: Vec<bool> = self
+            .steps
             .iter()
-            .all(|s| !matches!(s, AttributionStep::ExecutionResult { success: false, .. }))
+            .filter_map(|s| match s {
+                AttributionStep::ExecutionResult { success, .. } => Some(*success),
+                _ => None,
+            })
+            .collect();
+        if results.is_empty() {
+            None
+        } else {
+            Some(results.into_iter().all(|s| s))
+        }
     }
 }
 
@@ -311,7 +335,7 @@ pub struct UnparseableStream {
 #[serde(rename_all = "camelCase")]
 pub struct AttributionChainSummary {
     pub timestamp_nanos: u64,
-    pub success: bool,
+    pub success: Option<bool>,
     pub step_count: usize,
 }
 
@@ -492,11 +516,22 @@ mod tests {
             step: AttributionStep::ParsedAction {
                 action_type: "joint_target".to_string(),
                 vector: vec![0.42, -0.18, 0.31, 0.05, 0.0, 1.2],
-                confidence: 0.94,
+                confidence: Some(0.94),
             },
         };
         let decoded = AttributionEvent::decode(&event.encode()).expect("decode");
         assert_eq!(decoded, event);
+
+        let no_confidence = AttributionEvent {
+            frame_timestamp_nanos: 2_200,
+            step: AttributionStep::ParsedAction {
+                action_type: "joint_target".to_string(),
+                vector: vec![0.1, 0.2],
+                confidence: None,
+            },
+        };
+        let decoded = AttributionEvent::decode(&no_confidence.encode()).expect("decode");
+        assert_eq!(decoded, no_confidence);
     }
 
     #[test]
@@ -560,7 +595,7 @@ mod tests {
     fn decode_rejects_unknown_kind() {
         let mut bytes = Vec::new();
         bytes.extend_from_slice(MAGIC);
-        bytes.extend_from_slice(&1u16.to_le_bytes());
+        bytes.extend_from_slice(&VERSION.to_le_bytes());
         bytes.push(9);
         bytes.extend_from_slice(&0u64.to_le_bytes());
         match AttributionEvent::decode(&bytes) {
@@ -668,7 +703,7 @@ mod tests {
                 error_message: None,
             }],
         };
-        assert!(ok.success());
+        assert_eq!(ok.success(), Some(true));
 
         let failed = AttributionChain {
             timestamp_nanos: 0,
@@ -677,7 +712,7 @@ mod tests {
                 error_message: Some("collision".to_string()),
             }],
         };
-        assert!(!failed.success());
+        assert_eq!(failed.success(), Some(false));
 
         let no_result = AttributionChain {
             timestamp_nanos: 0,
@@ -686,19 +721,26 @@ mod tests {
                 token_count: 1,
             }],
         };
-        assert!(no_result.success());
+        assert_eq!(no_result.success(), None);
     }
 
     #[test]
     fn chain_json_uses_camel_case_field_names() {
         let chain = AttributionChain {
             timestamp_nanos: 5,
-            steps: vec![AttributionStep::LlmResponse {
-                text: "ok".to_string(),
-                token_count: 1,
-                model: "m".to_string(),
-                latency_ms: 10,
-            }],
+            steps: vec![
+                AttributionStep::LlmResponse {
+                    text: "ok".to_string(),
+                    token_count: 1,
+                    model: "m".to_string(),
+                    latency_ms: 10,
+                },
+                AttributionStep::ParsedAction {
+                    action_type: "joint_target".to_string(),
+                    vector: vec![0.5],
+                    confidence: None,
+                },
+            ],
         };
         let json = serde_json::to_value(&chain).unwrap();
         let step = &json["steps"][0];
@@ -706,6 +748,7 @@ mod tests {
         assert_eq!(step["tokenCount"], 1);
         assert_eq!(step["latencyMs"], 10);
         assert!(step.get("token_count").is_none());
+        assert!(json["steps"][1]["confidence"].is_null());
     }
 
     #[test]
@@ -741,10 +784,10 @@ mod tests {
         };
         let summary = AttributionSummary::from(&extractor);
         assert_eq!(summary.chains.len(), 2);
-        assert!(summary.chains[0].success);
+        assert_eq!(summary.chains[0].success, Some(true));
         assert_eq!(summary.chains[0].step_count, 2);
         assert_eq!(summary.chains[0].timestamp_nanos, 10);
-        assert!(!summary.chains[1].success);
+        assert_eq!(summary.chains[1].success, Some(false));
         assert_eq!(summary.unparseable_streams.len(), 1);
     }
 

@@ -220,7 +220,7 @@ const currentSourceHint = computed(() => (
             role="listitem"
             :class="[
               'attr-tick',
-              chain.success ? 'ok' : 'fail',
+              chain.success === null ? 'neutral' : chain.success ? 'ok' : 'fail',
               { selected: selectedTs === chain.timestampNanos, nearest: i === nearestIndex },
             ]"
             :title="formatTime(chain.timestampNanos)"
@@ -252,7 +252,7 @@ const currentSourceHint = computed(() => (
             <button class="attr-nav" type="button" :disabled="selectedIndex < 0 || selectedIndex >= chains.length - 1" @click="moveChain(1)">›</button>
             <span class="attr-detail-time">{{ formatTime(selectedTs) }}</span>
             <span
-              v-if="detail"
+              v-if="detail && chains[selectedIndex]?.success != null"
               :class="['attr-status-pill', chains[selectedIndex]?.success ? 'ok' : 'fail']"
             >
               {{ chains[selectedIndex]?.success ? t.attribution.success : t.attribution.failed }}
@@ -333,7 +333,7 @@ const currentSourceHint = computed(() => (
                 <strong>{{ t.attribution.stepAction }}</strong>
                 <div class="attr-chips">
                   <span class="attr-chip mono">{{ detail.steps[3].actionType }}</span>
-                  <span class="attr-chip">{{ t.attribution.confidence }} {{ (detail.steps[3].confidence * 100).toFixed(0) }}%</span>
+                  <span class="attr-chip">{{ t.attribution.confidence }} {{ detail.steps[3].confidence != null ? (detail.steps[3].confidence * 100).toFixed(0) + '%' : 'n/a' }}</span>
                 </div>
                 <table class="attr-table">
                   <tbody>
@@ -451,6 +451,7 @@ const currentSourceHint = computed(() => (
 .attr-tick.nearest:not(.selected) { border-color: color-mix(in srgb, var(--accent-cyan) 45%, transparent); }
 .attr-tick.ok .attr-icon { color: var(--accent-green); }
 .attr-tick.fail .attr-icon { color: var(--accent-red); }
+.attr-tick.neutral .attr-icon { color: var(--text-muted-dark); }
 .attr-tick.fail { background: color-mix(in srgb, var(--accent-red) 7%, var(--canvas-base)); }
 .attr-ticks {
   display: flex; flex-direction: column; gap: 2px; align-items: center;

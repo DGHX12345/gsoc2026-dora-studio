@@ -206,7 +206,7 @@ impl DrecGenerator {
                     step: AttributionStep::ParsedAction {
                         action_type: "joint_target".to_string(),
                         vector: vector.clone(),
-                        confidence,
+                        confidence: Some(confidence),
                     },
                 }
                 .encode(),
