@@ -1,0 +1,11 @@
+# GEN72 arm profile (template — validate against a real GEN72 dataset)
+robot: GEN72
+fields:
+  state: [observation.state, observations/state, obs.state, qpos]
+  action: [action, qpos_command]
+  task: [task_index]
+  timestamp: [timestamp]
+  frame_index: [frame_index]
+joint_mapping:
+  arm_joints: [0, 1, 2, 3, 4, 5]
+  gripper: 6

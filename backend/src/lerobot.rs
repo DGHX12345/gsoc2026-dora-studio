@@ -326,4 +326,42 @@ mod tests {
             "unexpected error: {err}"
         );
     }
+
+    #[test]
+    fn chains_from_frames_maps_steps_and_omits_unavailable() {
+        use crate::attribution::AttributionStep;
+        let frames = vec![FrameData {
+            frame_index: 0,
+            timestamp_ns: 33_333_333,
+            task_index: Some(0),
+            action: vec![0.1, 0.2, 0.3],
+            state: vec![0.0, 0.1, 0.2, 0.3],
+        }];
+        let tasks = BTreeMap::from([(0u32, "Pick up the red cube".to_string())]);
+        let chains = chains_from_frames(&frames, &tasks);
+        assert_eq!(chains.len(), 1);
+        let steps = &chains[0].steps;
+        assert_eq!(steps.len(), 3); // 无 LLM 回复/执行结果
+        assert!(matches!(&steps[0], AttributionStep::SensorFrame { topic, width, .. }
+            if topic == "lerobot/observation.state" && *width == 4));
+        assert!(matches!(&steps[1], AttributionStep::Prompt { text, .. } if text == "Pick up the red cube"));
+        assert!(matches!(&steps[2], AttributionStep::ParsedAction { vector, confidence: None, .. }
+            if vector.len() == 3));
+        assert_eq!(chains[0].timestamp_nanos, 33_333_333);
+        assert_eq!(chains[0].success(), None); // 无执行结果 → 中性
+    }
+
+    #[test]
+    fn chains_from_frames_falls_back_to_task_label() {
+        use crate::attribution::AttributionStep;
+        let frames = vec![FrameData {
+            frame_index: 0,
+            timestamp_ns: 0,
+            task_index: Some(7),
+            action: vec![],
+            state: vec![],
+        }];
+        let chains = chains_from_frames(&frames, &BTreeMap::new());
+        assert!(matches!(&chains[0].steps[1], AttributionStep::Prompt { text, .. } if text == "Task 7"));
+    }
 }

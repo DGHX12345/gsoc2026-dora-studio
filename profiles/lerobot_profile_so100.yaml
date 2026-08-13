@@ -1,0 +1,11 @@
+# SO-100 arm profile (template — validate against a real SO-100 dataset)
+robot: SO-100
+fields:
+  state: [observation.state, observations/state, obs.state, state]
+  action: [action]
+  task: [task_index]
+  timestamp: [timestamp]
+  frame_index: [frame_index]
+joint_mapping:
+  arm_joints: [0, 1, 2, 3, 4, 5]
+  gripper: 6
