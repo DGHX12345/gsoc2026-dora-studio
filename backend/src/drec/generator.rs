@@ -328,6 +328,113 @@ impl DrecGenerator {
 
         (header, entries)
     }
+
+    /// Generate the M11 tool-slot demo: joint animation plus planner
+    /// `waypoints`/`trajectory` streams, a static `tf` stream (map → odom →
+    /// base_link), and an unrelated camera stream that must not reach tools.
+    pub fn generate_tool_demo(
+        frame_count: usize,
+        interval_nanos: u64,
+    ) -> (RecordingHeader, Vec<RecordEntry>) {
+        let header = RecordingHeader {
+            version: 1,
+            start_nanos: 1_000_000_000,
+            dataflow_id: uuid::Uuid::new_v4(),
+            descriptor_yaml: b"nodes: [planner, tf_broadcaster, robot_state, camera]".to_vec(),
+        };
+
+        let mut entries = Vec::with_capacity(frame_count * 5);
+        for i in 0..frame_count {
+            let ts = (i as u64) * interval_nanos;
+
+            // Figure-8 waypoint path, full loop, z = 0.05
+            const WAYPOINT_COUNT: usize = 24;
+            let waypoints: Vec<[f64; 2]> = (0..WAYPOINT_COUNT)
+                .map(|k| {
+                    let t = std::f64::consts::TAU * k as f64 / WAYPOINT_COUNT as f64;
+                    [
+                        (0.28 * t.sin() * 1000.0).round() / 1000.0,
+                        (0.18 * (2.0 * t).sin() * 1000.0).round() / 1000.0,
+                    ]
+                })
+                .collect();
+            entries.push(RecordEntry {
+                node_id: "planner".to_string(),
+                output_id: "waypoints".to_string(),
+                timestamp_offset_nanos: ts,
+                event_bytes: serde_json::to_vec(&serde_json::json!({ "waypoints": waypoints }))
+                    .unwrap(),
+            });
+
+            // Flat stride-3 trajectory (x, y, z) — the dviz wire format
+            let trajectory: Vec<f64> = vec![
+                0.0, 0.0, 0.05, //
+                0.14, 0.10, 0.08, //
+                0.20, 0.05, 0.10, //
+                -0.06, -0.12, 0.06, //
+            ];
+            entries.push(RecordEntry {
+                node_id: "planner".to_string(),
+                output_id: "trajectory".to_string(),
+                timestamp_offset_nanos: ts + interval_nanos / 10,
+                event_bytes: serde_json::to_vec(&serde_json::json!(trajectory)).unwrap(),
+            });
+
+            // Static TF chain, sent every frame
+            let tf = serde_json::json!({
+                "transforms": [
+                    {
+                        "parent": "map", "child": "odom",
+                        "translation": [0.0, 0.0, 0.0],
+                        "rotation": [0.0, 0.0, 0.0, 1.0],
+                    },
+                    {
+                        "parent": "odom", "child": "base_link",
+                        "translation": [0.5, 0.0, 0.0],
+                        "rotation": [0.0, 0.0, 0.0, 1.0],
+                    },
+                ],
+            });
+            entries.push(RecordEntry {
+                node_id: "tf_broadcaster".to_string(),
+                output_id: "tf".to_string(),
+                timestamp_offset_nanos: ts + interval_nanos / 10,
+                event_bytes: serde_json::to_vec(&tf).unwrap(),
+            });
+
+            // Unrelated stream — no tool subscribes to it
+            entries.push(RecordEntry {
+                node_id: "camera".to_string(),
+                output_id: "image".to_string(),
+                timestamp_offset_nanos: ts,
+                event_bytes: serde_json::to_vec(&serde_json::json!({
+                    "width": 640, "height": 480, "encoding": "jpeg",
+                }))
+                .unwrap(),
+            });
+
+            let joints = serde_json::json!({
+                "joints": {
+                    "joint_1": ((i as f32) * 0.18).sin() * 0.6,
+                    "joint_2": ((i as f32) * 0.18 + 0.8).sin() * 0.6,
+                    "joint_3": ((i as f32) * 0.18 + 1.6).sin() * 0.6,
+                    "joint_4": ((i as f32) * 0.18 + 2.4).sin() * 0.6,
+                    "joint_5": ((i as f32) * 0.18 + 3.2).sin() * 0.6,
+                    "joint_6": ((i as f32) * 0.18 + 4.0).sin() * 0.6,
+                },
+                "basePose": { "x": 0.0, "y": 0.0, "yaw": 0.0 },
+            });
+            entries.push(RecordEntry {
+                node_id: "robot_state".to_string(),
+                output_id: "joint_state".to_string(),
+                timestamp_offset_nanos: ts + interval_nanos / 10,
+                event_bytes: serde_json::to_vec(&joints).unwrap(),
+            });
+        }
+        entries.sort_by_key(|e| e.timestamp_offset_nanos);
+
+        (header, entries)
+    }
 }
 
 #[cfg(test)]
@@ -378,6 +485,55 @@ mod tests {
         for entry in &entries {
             assert!(!entry.event_bytes.starts_with(crate::attribution::MAGIC));
         }
+    }
+
+    #[test]
+    fn generate_tool_demo_produces_planner_tf_and_joint_streams() {
+        let (_header, entries) = DrecGenerator::generate_tool_demo(5, 100_000_000);
+
+        let streams: std::collections::HashSet<(String, String)> = entries
+            .iter()
+            .map(|e| (e.node_id.clone(), e.output_id.clone()))
+            .collect();
+        assert!(streams.contains(&("planner".to_string(), "waypoints".to_string())));
+        assert!(streams.contains(&("tf_broadcaster".to_string(), "tf".to_string())));
+        assert!(streams.contains(&("robot_state".to_string(), "joint_state".to_string())));
+
+        let waypoints: serde_json::Value = serde_json::from_slice(
+            &entries
+                .iter()
+                .find(|e| e.node_id == "planner" && e.output_id == "waypoints")
+                .unwrap()
+                .event_bytes,
+        )
+        .unwrap();
+        let pairs = waypoints["waypoints"].as_array().unwrap();
+        assert!(pairs.len() >= 2);
+        assert_eq!(pairs[0].as_array().unwrap().len(), 2);
+
+        let tf: serde_json::Value = serde_json::from_slice(
+            &entries
+                .iter()
+                .find(|e| e.node_id == "tf_broadcaster")
+                .unwrap()
+                .event_bytes,
+        )
+        .unwrap();
+        let transforms = tf["transforms"].as_array().unwrap();
+        assert_eq!(transforms[0]["parent"].as_str().unwrap(), "map");
+        assert_eq!(transforms[0]["rotation"].as_array().unwrap().len(), 4);
+    }
+
+    #[test]
+    fn writes_tool_demo_file() {
+        let (header, entries) = DrecGenerator::generate_tool_demo(120, 33_333_333);
+        let dir = std::env::temp_dir().join("dora-studio-tests");
+        std::fs::create_dir_all(&dir).ok();
+        let path = dir.join("tool_demo.drec");
+        let mut file = std::fs::File::create(&path).unwrap();
+        DrecGenerator::write_to(&mut file, &header, &entries).unwrap();
+        assert!(path.exists());
+        // Kept for manual tool-slot testing
     }
 
     #[test]

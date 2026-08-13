@@ -5,6 +5,9 @@
 
 import type { PlaybackEngine } from './playback'
 import { getRecordingEntriesWithData, type SeekEntryResponse } from './api'
+import { entryToToolBatch } from './tools/feed'
+import { toolRegistry } from './tools/registry'
+import { parseTfPayload, SimpleTfTree } from './tools/tf'
 
 // ---------------------------------------------------------------------------
 // Data types
@@ -40,6 +43,7 @@ const emptyBasePose: RobotBasePose = { x: 0, y: 0, yaw: 0 }
 
 export class ReplayScene {
   private _recordingId: string
+  private _tfTree = new SimpleTfTree()
   private _currentFrame: ReplayFrame = {
     timestampNanos: 0,
     joints: { ...emptyJoints },
@@ -103,7 +107,16 @@ export class ReplayScene {
       } catch {
         // Skip entries with non-JSON payloads
       }
+
+      // M11: feed tool slots. TF payloads update the frame tree first so the
+      // transforms of this frame are current for the tools receiving them.
+      const batch = entryToToolBatch(e)
+      if (!batch) continue
+      const tfEntries = parseTfPayload(batch.payload.json)
+      if (tfEntries.length > 0) this._tfTree.apply(tfEntries)
+      toolRegistry.broadcastBatch(batch, this._tfTree)
     }
+    toolRegistry.broadcastSeek(timestampNs)
 
     this._currentFrame = {
       timestampNanos: timestampNs,
