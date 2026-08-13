@@ -127,6 +127,7 @@
           :recording-id="replayRecordingId"
           :current-timestamp="replayCurrentTime"
           @seek-timestamp="(ts: number) => replayEngine?.seek(ts, true)"
+          @apply-action="applyActionVector"
         />
 
         <!-- Floating replay bar (overlay at bottom of viewport) -->
@@ -446,6 +447,17 @@ async function startReplay() {
     replayActive.value = false
     replayError.value = e instanceof Error ? `Load failed: ${e.message}` : 'Load failed'
   }
+}
+
+// M10: apply a LeRobot action vector to the live viewport (first 6 joints).
+function applyActionVector(vector: number[]) {
+  viewportMode.value = 'live'
+  const joints = createNanoArmJointState()
+  const names: (keyof typeof joints)[] = ['joint1', 'joint2', 'joint3', 'joint4', 'joint5', 'joint6']
+  names.forEach((name, i) => {
+    if (vector[i] !== undefined) joints[name] = vector[i]
+  })
+  Object.assign(nanoArmJointState, joints)
 }
 
 function stopReplay() {
