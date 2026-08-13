@@ -34,7 +34,9 @@ export function parseWaypoints(payload: ToolPayload): number[] {
 }
 
 /** Trajectory: flat array; stride 3 (xyz) passes through, stride 7 keeps the
- * first 3 of each 7 (drops the quaternion). Anything else → []. */
+ * first 3 of each 7 (drops the quaternion). At lengths divisible by both 3
+ * and 7, stride 3 wins (dimensions are implicit on the wire). Anything else
+ * → []. */
 export function parseTrajectory(payload: ToolPayload): number[] {
   const flat = flatNumbers(payload);
   if (flat === null) return [];

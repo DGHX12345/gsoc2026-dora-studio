@@ -91,6 +91,7 @@ const tests: TestCase[] = [
     name: 'parseTrajectory accepts the json number-array form',
     run: () => {
       assert.deepEqual(parseTrajectory(jsonPayload([1, 2, 3, 4, 5, 6])), [1, 2, 3, 4, 5, 6]);
+      assert.deepEqual(parseTrajectory(jsonPayload([1, 2, 3, 0, 0, 0, 1, 4, 5, 6, 0, 0, 0, 1])), [1, 2, 3, 4, 5, 6]);
       assert.deepEqual(parseTrajectory(jsonPayload(['a', 'b'])), []);
     },
   },
