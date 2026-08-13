@@ -573,6 +573,21 @@ const tests: TestCase[] = [
       const { center, radius } = computePathBounds(box);
       assert.deepEqual(center, { x: 0.5, y: 1, z: 1.5 });
       assert.equal(radius, Math.hypot(1, 2, 3) / 2); // half-diagonal
+
+      // Non-triplet input: guarded, no NaN min/max.
+      assert.deepEqual(computePathBounds([0, 0, 0, 1]), {
+        center: { x: 0, y: 0, z: 0 },
+        radius: 0,
+      });
+
+      // Corners of the box [-1,-2,-3]×[1,2,3] spanning negative coordinates.
+      const negativeBox = [
+        -1, -2, -3, 1, -2, -3, -1, 2, -3, 1, 2, -3,
+        -1, -2, 3, 1, -2, 3, -1, 2, 3, 1, 2, 3,
+      ];
+      const neg = computePathBounds(negativeBox);
+      assert.deepEqual(neg.center, { x: 0, y: 0, z: 0 });
+      assert.equal(neg.radius, Math.hypot(1, 2, 3)); // half-diagonal = sqrt(14)
     },
   },
   {
@@ -626,6 +641,35 @@ const tests: TestCase[] = [
         [0.5 + radius * 1.75, 1 - radius * 2.15, 1.5 + radius * 1.1],
       );
       assert.ok(camera.position.lengthSq() > 0); // moved off the origin
+      tool.onDetach();
+    },
+  },
+  {
+    name: 'snapCameraToPath without focusOn: a single-point path frames off the point with no NaN',
+    run: () => {
+      const camera = new PerspectiveCamera();
+      camera.position.set(0, 0, 0);
+      const context: ToolContext = { scene: new Scene(), camera, requestRender: () => {} };
+      const tool = new DvizPathTool();
+      tool.onAttach(context);
+      // Single point → radius 0: the fallback must use a safe unit radius.
+      tool.onBatch(batch('planner', 'trajectory', 100, f32([1, 2, 3])));
+
+      assert.doesNotThrow(() => tool.snapCameraToPath('planner/trajectory'));
+      assert.ok(
+        [camera.position.x, camera.position.y, camera.position.z].every(Number.isFinite),
+        'camera position contains no NaN/Infinity',
+      );
+      assert.deepEqual(
+        [camera.position.x, camera.position.y, camera.position.z],
+        [1 + 1.75, 2 - 2.15, 3 + 1.1],
+      );
+      // Moved off the path point: never parked exactly on it.
+      assert.notDeepEqual(
+        [camera.position.x, camera.position.y, camera.position.z],
+        [1, 2, 3],
+      );
+      assert.ok(camera.position.lengthSq() > 0);
       tool.onDetach();
     },
   },

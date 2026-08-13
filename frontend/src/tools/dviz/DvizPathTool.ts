@@ -49,7 +49,8 @@ export function computePathBounds(points: number[]): {
   center: { x: number; y: number; z: number };
   radius: number;
 } {
-  if (points.length === 0) return { center: { x: 0, y: 0, z: 0 }, radius: 0 };
+  if (points.length % 3 !== 0 || points.length === 0)
+    return { center: { x: 0, y: 0, z: 0 }, radius: 0 };
   let minX = Infinity;
   let minY = Infinity;
   let minZ = Infinity;
@@ -280,10 +281,13 @@ export class DvizPathTool implements ViewportTool {
       this.context.focusOn(center, radius);
       return;
     }
+    // A single-point path yields radius 0; a 0 offset would leave the camera
+    // at the point and lookAt would build a NaN matrix. Frame at unit scale.
+    const safeRadius = radius > 0 ? radius : 1;
     this.context.camera.position.set(
-      center.x + radius * 1.75,
-      center.y - radius * 2.15,
-      center.z + radius * 1.1,
+      center.x + safeRadius * 1.75,
+      center.y - safeRadius * 2.15,
+      center.z + safeRadius * 1.1,
     );
     this.context.camera.lookAt(center.x, center.y, center.z);
     this.context.requestRender();
