@@ -721,6 +721,35 @@ export function getMetricsNodeHistory(nodeId: string, windowSecs?: number) {
   )
 }
 
+// --- Monitoring control (M11.5) ---
+
+export type MonitoringTargetStatus = {
+  enabled: boolean
+  sampleCount: number
+  lastPollAt: number | null
+}
+
+export type MonitoringStatusResponse = {
+  nodeMetrics: MonitoringTargetStatus
+  otelSpans: MonitoringTargetStatus & {
+    connected: boolean
+    spanCount: number
+    endpoint: string
+  }
+}
+
+export function getMonitoringStatus() {
+  return fetchJson<MonitoringStatusResponse>('/monitoring/status')
+}
+
+export function setMonitoringToggle(body: { nodeMetrics?: boolean; otelSpans?: boolean }) {
+  return fetchJson<MonitoringStatusResponse>('/monitoring/toggle', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+}
+
 // --- OTel spans (M08) ---
 
 export type OtelSpanResponse = {

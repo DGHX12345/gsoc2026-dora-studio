@@ -83,6 +83,20 @@ type Messages = {
     controls: string
     controlsHint: string
   }
+  monitoring: {
+    title: string
+    masterLabel: string
+    on: string
+    off: string
+    nodeMetrics: string
+    otelSpans: string
+    samples: string
+    disabledTitle: string
+    disabledHint: string
+    enable: string
+    statusOff: string
+    statusOn: string
+  }
 }
 
 const messages: Record<Locale, Messages> = {
@@ -170,6 +184,20 @@ const messages: Record<Locale, Messages> = {
       controls: '控制面板',
       controlsHint: '挂载后展开此面板查看工具控制项',
     },
+    monitoring: {
+      title: '监测',
+      masterLabel: '主开关',
+      on: '开',
+      off: '关',
+      nodeMetrics: '节点指标',
+      otelSpans: 'OTel 火焰图',
+      samples: '样本',
+      disabledTitle: '监测已关闭',
+      disabledHint: '监测按需开启——开启后每 2 秒采集一次节点指标，不开启零开销',
+      enable: '一键开启',
+      statusOff: '已关闭',
+      statusOn: '采集中',
+    },
   },
   en: {
     app: {
@@ -254,6 +282,20 @@ const messages: Record<Locale, Messages> = {
       categoryPlanning: 'Planning',
       controls: 'Control panel',
       controlsHint: 'Attach the tool to expand its controls',
+    },
+    monitoring: {
+      title: 'Monitoring',
+      masterLabel: 'Master switch',
+      on: 'On',
+      off: 'Off',
+      nodeMetrics: 'Node metrics',
+      otelSpans: 'OTel spans',
+      samples: 'samples',
+      disabledTitle: 'Monitoring is off',
+      disabledHint: 'Monitoring is opt-in — no polling runs until you enable it',
+      enable: 'Enable',
+      statusOff: 'off',
+      statusOn: 'collecting',
     },
   },
 }

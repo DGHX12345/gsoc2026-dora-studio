@@ -1,5 +1,42 @@
 <template>
   <section class="view-stack">
+    <!-- M11.5: monitoring control bar -->
+    <article class="panel monitoring-bar">
+      <div class="monitoring-row">
+        <div class="monitoring-master">
+          <span class="monitoring-label">{{ t.monitoring.title }}</span>
+          <span class="monitoring-master-label">{{ t.monitoring.masterLabel }}</span>
+          <button
+            :class="['monitoring-switch', { on: masterEnabled }]"
+            type="button"
+            @click="toggleMaster(!masterEnabled)"
+          >{{ masterEnabled ? t.monitoring.on : t.monitoring.off }}</button>
+        </div>
+        <div class="monitoring-target" :class="{ on: nodeMetricsEnabled }">
+          <span class="monitoring-target-label">{{ t.monitoring.nodeMetrics }}</span>
+          <button
+            :class="['monitoring-switch', 'small', { on: nodeMetricsEnabled }]"
+            type="button"
+            @click="toggleTarget('nodeMetrics', !nodeMetricsEnabled)"
+          >{{ nodeMetricsEnabled ? t.monitoring.on : t.monitoring.off }}</button>
+          <span class="monitoring-stat">
+            {{ nodeMetricsEnabled ? `${monitoring?.nodeMetrics.sampleCount ?? 0} ${t.monitoring.samples}` : t.monitoring.statusOff }}
+          </span>
+        </div>
+        <div class="monitoring-target" :class="{ on: otelSpansEnabled }">
+          <span class="monitoring-target-label">{{ t.monitoring.otelSpans }}</span>
+          <button
+            :class="['monitoring-switch', 'small', { on: otelSpansEnabled }]"
+            type="button"
+            @click="toggleTarget('otelSpans', !otelSpansEnabled)"
+          >{{ otelSpansEnabled ? t.monitoring.on : t.monitoring.off }}</button>
+          <span class="monitoring-stat">
+            {{ otelSpansEnabled ? `${monitoring?.otelSpans.sampleCount ?? 0} ${t.monitoring.samples}` : t.monitoring.statusOff }}
+          </span>
+        </div>
+      </div>
+    </article>
+
     <!-- Summary bar -->
     <div class="metric-grid">
       <article :class="['metric-card', 'large-metric', nodeCount > 0 ? 'success' : 'warning']">
@@ -30,7 +67,14 @@
         <h2>CPU / Memory Timeline</h2>
         <span class="pill">{{ chartTimeRange }}s window</span>
       </div>
-      <div v-if="nodeCount === 0" class="empty-state">
+      <div v-if="!nodeMetricsEnabled" class="empty-state monitoring-off-state">
+        <strong>{{ t.monitoring.disabledTitle }}</strong>
+        <p>{{ t.monitoring.disabledHint }}</p>
+        <button class="monitoring-enable-btn" type="button" @click="toggleTarget('nodeMetrics', true)">
+          {{ t.monitoring.enable }}
+        </button>
+      </div>
+      <div v-else-if="nodeCount === 0" class="empty-state">
         No metrics data available. Start a dora dataflow to see performance charts.
       </div>
       <div v-else class="chart-container">
@@ -52,7 +96,14 @@
           <h2>Node Metrics</h2>
           <span :class="['pill', nodeCount > 0 ? 'success' : 'warning']">{{ nodeCount }} nodes</span>
         </div>
-        <div v-if="nodeCount === 0" class="empty-state">
+        <div v-if="!nodeMetricsEnabled" class="empty-state monitoring-off-state">
+          <strong>{{ t.monitoring.disabledTitle }}</strong>
+          <p>{{ t.monitoring.disabledHint }}</p>
+          <button class="monitoring-enable-btn" type="button" @click="toggleTarget('nodeMetrics', true)">
+            {{ t.monitoring.enable }}
+          </button>
+        </div>
+        <div v-else-if="nodeCount === 0" class="empty-state">
           No node metrics available. Metrics are collected from <code>dora node list --format json</code> when nodes are running.
         </div>
         <div v-else class="node-gauge-grid">
@@ -116,6 +167,14 @@
           {{ otelConnected ? `${otelSpanCount} spans` : 'OTel not connected' }}
         </span>
       </div>
+      <div v-if="!otelSpansEnabled" class="empty-state monitoring-off-state">
+        <strong>{{ t.monitoring.disabledTitle }}</strong>
+        <p>{{ t.monitoring.disabledHint }}</p>
+        <button class="monitoring-enable-btn" type="button" @click="toggleTarget('otelSpans', true)">
+          {{ t.monitoring.enable }}
+        </button>
+      </div>
+      <template v-else>
       <div class="fg-controls-row">
         <input
           v-model="spanSearch"
@@ -156,6 +215,7 @@
           :node-colors="otelNodeColors"
         />
       </div>
+      </template>
     </article>
   </section>
 </template>
@@ -164,13 +224,62 @@
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import {
   getMetricsNodes,
+  getMonitoringStatus,
   getOtelSpans,
   getOtelStatus,
+  setMonitoringToggle,
+  type MonitoringStatusResponse,
   type NodeMetricSummaryResponse,
   type NodeMetricSampleResponse,
   type OtelSpanResponse,
 } from '../api'
+import { useI18n } from '../i18n'
 import FlameGraph from './FlameGraph.vue'
+
+// --- M11.5: monitoring control ---
+
+const { t } = useI18n()
+
+const MONITORING_STORAGE_KEY = 'dora-studio-monitoring'
+const monitoring = ref<MonitoringStatusResponse | null>(null)
+
+const nodeMetricsEnabled = computed(() => monitoring.value?.nodeMetrics.enabled ?? false)
+const otelSpansEnabled = computed(() => monitoring.value?.otelSpans.enabled ?? false)
+const masterEnabled = computed(() => nodeMetricsEnabled.value && otelSpansEnabled.value)
+
+function persistMonitoring() {
+  try {
+    localStorage.setItem(MONITORING_STORAGE_KEY, JSON.stringify({
+      nodeMetrics: nodeMetricsEnabled.value,
+      otelSpans: otelSpansEnabled.value,
+    }))
+  } catch { /* storage unavailable */ }
+}
+
+async function applyToggle(body: { nodeMetrics?: boolean; otelSpans?: boolean }) {
+  try {
+    monitoring.value = await setMonitoringToggle(body)
+    persistMonitoring()
+  } catch {
+    // Backend offline — status polling will resync later
+  }
+}
+
+function toggleTarget(target: 'nodeMetrics' | 'otelSpans', enabled: boolean) {
+  void applyToggle({ [target]: enabled })
+}
+
+function toggleMaster(enabled: boolean) {
+  void applyToggle({ nodeMetrics: enabled, otelSpans: enabled })
+}
+
+async function pollMonitoringStatus() {
+  try {
+    monitoring.value = await getMonitoringStatus()
+  } catch {
+    // keep last known state
+  }
+}
 
 // --- State ---
 
@@ -436,6 +545,24 @@ onMounted(() => {
   pollOtel()
   otelTimer = window.setInterval(pollOtel, 5000)
 
+  pollMonitoringStatus()
+  window.setInterval(pollMonitoringStatus, 2000)
+
+  // Restore persisted monitoring state — the backend boots with monitoring
+  // off, so re-apply any target the user had left on.
+  try {
+    const stored = localStorage.getItem(MONITORING_STORAGE_KEY)
+    if (stored) {
+      const parsed = JSON.parse(stored) as { nodeMetrics?: boolean; otelSpans?: boolean }
+      if (parsed.nodeMetrics || parsed.otelSpans) {
+        void applyToggle({
+          nodeMetrics: parsed.nodeMetrics,
+          otelSpans: parsed.otelSpans,
+        })
+      }
+    }
+  } catch { /* ignore corrupted storage */ }
+
   if (chartCanvasEl.value) {
     resizeObserver = new ResizeObserver(() => drawChart())
     resizeObserver.observe(chartCanvasEl.value)
@@ -450,6 +577,66 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
+/* --- M11.5: monitoring control bar --- */
+.monitoring-bar { padding: 10px 14px; }
+.monitoring-row {
+  display: flex; align-items: center; gap: 24px; flex-wrap: wrap;
+}
+.monitoring-master {
+  display: flex; align-items: center; gap: 10px;
+}
+.monitoring-label {
+  font-size: 16px; font-weight: 600; color: var(--text-primary);
+}
+.monitoring-master-label {
+  font-size: 13px; color: var(--text-secondary);
+}
+.monitoring-switch {
+  min-width: 56px; padding: 8px 16px;
+  border: 1px solid var(--border-card);
+  border-radius: 999px;
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  font-size: 14px; font-weight: 600; cursor: pointer;
+}
+.monitoring-switch.small { min-width: 44px; padding: 5px 12px; font-size: 13px; }
+.monitoring-switch.on {
+  background: color-mix(in srgb, #22c55e 22%, transparent);
+  border-color: #22c55e;
+  color: var(--text-primary);
+}
+.monitoring-target {
+  display: flex; align-items: center; gap: 10px;
+  padding: 4px 10px;
+  border: 1px solid var(--border-card);
+  border-radius: 8px;
+}
+.monitoring-target.on { border-color: color-mix(in srgb, #22c55e 35%, transparent); }
+.monitoring-target-label {
+  font-size: 14px; color: var(--text-primary);
+}
+.monitoring-stat {
+  font-size: 13px; font-family: monospace; color: var(--text-secondary);
+  min-width: 90px; text-align: right;
+}
+.monitoring-off-state {
+  display: flex; flex-direction: column; align-items: center; gap: 8px;
+  padding: 28px 16px !important;
+}
+.monitoring-off-state strong { font-size: 15px; color: var(--text-primary); }
+.monitoring-off-state p {
+  margin: 0; font-size: 13px; color: var(--text-secondary);
+  max-width: 480px; text-align: center;
+}
+.monitoring-enable-btn {
+  margin-top: 4px;
+  padding: 10px 22px;
+  border: none; border-radius: 8px;
+  background: var(--col-accent, #5b9bd5);
+  color: #fff; font-size: 14px; font-weight: 600; cursor: pointer;
+}
+.monitoring-enable-btn:hover { filter: brightness(1.1); }
+
 .metrics-canvas {
   width: 100%;
   height: 260px;
