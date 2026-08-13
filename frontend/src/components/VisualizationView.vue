@@ -445,7 +445,10 @@ async function startReplay() {
   } catch (e) {
     console.error('Failed to start replay:', e)
     replayActive.value = false
-    replayError.value = e instanceof Error ? `Load failed: ${e.message}` : 'Load failed'
+    const hint = replayPath.value.endsWith('.drec')
+      ? ''
+      : ' — LeRobot 数据集请用归因条数据源下拉的 LeRobot 项（.drec 回放只接受 .drec 文件）'
+    replayError.value = e instanceof Error ? `Load failed: ${e.message}${hint}` : 'Load failed'
   }
 }
 

@@ -87,7 +87,12 @@ async function fetchJson<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${API_BASE_URL}${path}`, init)
 
   if (!response.ok) {
-    throw new Error(`API request failed: ${response.status}`)
+    let detail = ''
+    try {
+      const body = await response.json()
+      if (body && typeof body.error === 'string') detail = ` — ${body.error}`
+    } catch { /* non-JSON error body */ }
+    throw new Error(`API request failed: ${response.status}${detail}`)
   }
 
   return response.json() as Promise<T>
