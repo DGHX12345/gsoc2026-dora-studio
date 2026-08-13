@@ -670,4 +670,11 @@ onBeforeUnmount(() => {
   scene = null
   camera = null
 })
+
+// M11: tool slot support — let the parent mount tools into our scene.
+defineExpose({
+  getScene: () => scene,
+  getCamera: () => camera,
+  requestRender,
+})
 </script>

@@ -66,6 +66,23 @@ type Messages = {
     datasetScanFailed: string
     nanoPreviewNote: string
   }
+  tools: {
+    title: string
+    close: string
+    attached: string
+    detached: string
+    error: string
+    attach: string
+    detach: string
+    recommendation: string
+    recommendationHint: string
+    empty: string
+    categoryVisualization: string
+    categoryDiagnostics: string
+    categoryPlanning: string
+    controls: string
+    controlsHint: string
+  }
 }
 
 const messages: Record<Locale, Messages> = {
@@ -136,6 +153,23 @@ const messages: Record<Locale, Messages> = {
       datasetScanFailed: '数据集扫描失败',
       nanoPreviewNote: '该动作在 Nano 模型上预览（暂无 B601 模型，接入见 M13）',
     },
+    tools: {
+      title: '工具',
+      close: '关闭',
+      attached: '已挂载',
+      detached: '未挂载',
+      error: '错误',
+      attach: '挂载',
+      detach: '卸载',
+      recommendation: '推荐',
+      recommendationHint: '检测到匹配的数据流端口，可挂载此工具',
+      empty: '暂无已注册工具',
+      categoryVisualization: '可视化',
+      categoryDiagnostics: '诊断',
+      categoryPlanning: '规划',
+      controls: '控制面板',
+      controlsHint: '挂载后展开此面板查看工具控制项',
+    },
   },
   en: {
     app: {
@@ -203,6 +237,23 @@ const messages: Record<Locale, Messages> = {
       of: 'of',
       datasetScanFailed: 'Dataset scan failed',
       nanoPreviewNote: 'Previewed on the Nano model (no B601 model yet; see M13)',
+    },
+    tools: {
+      title: 'Tools',
+      close: 'Close',
+      attached: 'attached',
+      detached: 'detached',
+      error: 'error',
+      attach: 'Attach',
+      detach: 'Detach',
+      recommendation: 'Recommended',
+      recommendationHint: 'A matching dataflow port was detected',
+      empty: 'No tools registered',
+      categoryVisualization: 'Visualization',
+      categoryDiagnostics: 'Diagnostics',
+      categoryPlanning: 'Planning',
+      controls: 'Control panel',
+      controlsHint: 'Attach the tool to expand its controls',
     },
   },
 }

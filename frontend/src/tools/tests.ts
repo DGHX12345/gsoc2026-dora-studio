@@ -5,3 +5,4 @@ import './tf.test';
 import './matching.test';
 import './registry.test';
 import './feed.test';
+import './demo/WaypointEchoTool.test';

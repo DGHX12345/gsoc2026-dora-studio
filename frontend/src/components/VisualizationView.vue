@@ -109,16 +109,30 @@
           :class="['pill', viewportMode === 'live' ? 'success' : 'info']"
           @click="viewportMode = viewportMode === 'live' ? 'replay' : 'live'"
         >{{ viewportMode === 'live' ? 'Live' : 'Replay' }}</button>
+        <!-- M11: tool slot panel toggle -->
+        <button
+          :class="['pill', toolsPanelOpen ? 'success' : '']"
+          @click="toolsPanelOpen = !toolsPanelOpen"
+        >Tools</button>
       </div>
 
       <!-- 3D Viewer fills remaining space -->
       <div class="viz-robot-viewer-card">
         <NanoRobotViewer
+          ref="nanoViewer"
           :xml-url="nanoArmResources.xmlUrl"
           :asset-base-url="nanoArmResources.assetBaseUrl"
           :joint-values="effectiveJointState"
           :base-pose="effectiveBasePose"
           viewer-label="Nano RobotModel"
+        />
+
+        <!-- M11: tool slot panel (overlay) -->
+        <ToolPanel
+          v-if="toolsPanelOpen"
+          :recommendations="toolRecommendations"
+          @close="toolsPanelOpen = false"
+          @toggle-tool="toggleTool"
         />
 
         <!-- M09/M10: attribution bar (replay mode, above the floating replay bar) -->
@@ -162,14 +176,18 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
-import { BACKEND_BASE_URL, getDvizDisplays, getDvizSnapshot, getDvizStatus, getDvizTopics, getRobotProfile, openRecording, type ApiResult, type ApiSource, type DvizDisplayResponse, type DvizDisplaysResponse, type DvizSnapshotResponse, type DvizStatusResponse, type DvizTopicResponse, type DvizTopicsResponse, type RobotModuleResponse, type RobotProfileResponse } from '../api'
+import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import { BACKEND_BASE_URL, getDvizDisplays, getDvizSnapshot, getDvizStatus, getDvizTopics, getRecordingStreams, getRobotProfile, openRecording, type ApiResult, type ApiSource, type DvizDisplayResponse, type DvizDisplaysResponse, type DvizSnapshotResponse, type DvizStatusResponse, type DvizTopicResponse, type DvizTopicsResponse, type RobotModuleResponse, type RobotProfileResponse } from '../api'
 import { buildNanoArmModelResources, createNanoArmJointState } from '../lib/nanoArmModel'
 import { PlaybackEngine } from '../playback'
 import { ReplayScene, type RobotJointState, type RobotBasePose } from '../replay-scene'
 import { createNanoRobotBasePose } from '../lib/nanoRobotMotion'
+import { findRecommendations } from '../tools/matching'
+import { toolRegistry } from '../tools/registry'
+import { registerBuiltinTools } from '../tools/index'
 import NanoRobotViewer from './NanoRobotViewer.vue'
 import AttributionBar from './AttributionBar.vue'
+import ToolPanel, { type ToolRecommendation } from './ToolPanel.vue'
 
 const fallbackDvizStatus: DvizStatusResponse = {
   installed: false,
@@ -442,6 +460,8 @@ async function startReplay() {
 
     scene.attach(engine)
     engine.seek(0, true)
+
+    updateToolRecommendations(info.id)
   } catch (e) {
     console.error('Failed to start replay:', e)
     replayActive.value = false
@@ -473,6 +493,41 @@ function stopReplay() {
   replayError.value = null
   Object.assign(replayJoints, createNanoArmJointState())
   Object.assign(replayBasePose, { x: 0, y: 0, yaw: 0 })
+  toolRecommendations.value = []
+}
+
+// --- M11: tool slot panel ---
+const nanoViewer = ref<InstanceType<typeof NanoRobotViewer> | null>(null)
+const toolsPanelOpen = ref(false)
+const toolRecommendations = ref<ToolRecommendation[]>([])
+
+function toggleTool(id: string, enable: boolean) {
+  if (enable) {
+    const viewer = nanoViewer.value
+    const scene = viewer?.getScene()
+    const camera = viewer?.getCamera()
+    if (!scene || !camera) return // viewer not ready yet
+    toolRegistry.attachToScene(id, {
+      scene,
+      camera,
+      requestRender: () => viewer?.requestRender(),
+    })
+  } else {
+    toolRegistry.detachFromScene(id)
+  }
+}
+
+async function updateToolRecommendations(recordingId: string) {
+  try {
+    const { streams } = await getRecordingStreams(recordingId)
+    const recommendations = findRecommendations(
+      toolRegistry.list().map((tool) => ({ id: tool.id, subscribePorts: tool.subscribePorts })),
+      streams.map((s) => ({ nodeId: s.nodeId, outputId: s.outputId })),
+    )
+    toolRecommendations.value = recommendations
+  } catch {
+    toolRecommendations.value = []
+  }
 }
 
 const backendConnected = computed(() => (
@@ -657,7 +712,17 @@ async function loadVisualizationData() {
   isRefreshing.value = false
 }
 
-onMounted(loadVisualizationData)
+onMounted(() => {
+  loadVisualizationData()
+  registerBuiltinTools()
+})
+
+onBeforeUnmount(() => {
+  // Tools hold scene objects owned by this viewport instance
+  for (const tool of toolRegistry.list()) {
+    toolRegistry.detachFromScene(tool.id)
+  }
+})
 </script>
 
 <style scoped>
