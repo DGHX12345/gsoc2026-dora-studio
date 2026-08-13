@@ -4,14 +4,14 @@
 // (including Line2/LineMaterial) works without a renderer.
 
 import assert from 'node:assert/strict';
-import { Group, InstancedMesh, Mesh, Scene, SphereGeometry } from 'three';
+import { Group, InstancedMesh, Mesh, PerspectiveCamera, Scene, SphereGeometry } from 'three';
 import { Line2 } from 'three/examples/jsm/lines/Line2.js';
 import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js';
 
 import { matchToolPorts } from '../matching';
 import type { ToolBatch, ToolContext, ToolPayload } from '../types';
 import { computePathLength } from './parse';
-import { computeStaleness, DvizPathTool } from './DvizPathTool';
+import { computePathBounds, computeStaleness, DvizPathTool } from './DvizPathTool';
 
 type TestCase = {
   name: string;
@@ -553,6 +553,87 @@ const tests: TestCase[] = [
       assert.deepEqual([first[0], first[1]], [5, 5]);
       assert.ok(Math.abs(first[2] - 0.05) < 1e-6);
       tool.onDetach();
+    },
+  },
+  {
+    name: 'computePathBounds: empty, single point, and the corners of a 1×2×3 box',
+    run: () => {
+      assert.deepEqual(computePathBounds([]), { center: { x: 0, y: 0, z: 0 }, radius: 0 });
+
+      assert.deepEqual(computePathBounds([4, -2, 7]), {
+        center: { x: 4, y: -2, z: 7 },
+        radius: 0,
+      });
+
+      // All 8 corners of the box [0,1]×[0,2]×[0,3].
+      const box = [
+        0, 0, 0, 1, 0, 0, 0, 2, 0, 1, 2, 0,
+        0, 0, 3, 1, 0, 3, 0, 2, 3, 1, 2, 3,
+      ];
+      const { center, radius } = computePathBounds(box);
+      assert.deepEqual(center, { x: 0.5, y: 1, z: 1.5 });
+      assert.equal(radius, Math.hypot(1, 2, 3) / 2); // half-diagonal
+    },
+  },
+  {
+    name: 'snapCameraToPath calls focusOn with the path bounds when the context provides it',
+    run: () => {
+      const calls: Array<{ center: { x: number; y: number; z: number }; radius: number }> = [];
+      const context: ToolContext = {
+        scene: new Scene(),
+        camera: new PerspectiveCamera(),
+        requestRender: () => {},
+        focusOn: (center, radius) => {
+          calls.push({ center, radius });
+        },
+      };
+      const tool = new DvizPathTool();
+      tool.onAttach(context);
+
+      // trajectory = stride-3 xyz, passes through the parser unchanged.
+      tool.onBatch(batch('planner', 'trajectory', 100, f32([0, 0, 0, 1, 2, 3])));
+      tool.snapCameraToPath('planner/trajectory');
+      assert.equal(calls.length, 1);
+      assert.deepEqual(calls[0].center, { x: 0.5, y: 1, z: 1.5 });
+      assert.equal(calls[0].radius, Math.hypot(1, 2, 3) / 2);
+
+      // A later batch updates the stored points: framing follows.
+      tool.onBatch(batch('planner', 'trajectory', 200, f32([5, 5, 5, 7, 7, 7])));
+      tool.snapCameraToPath('planner/trajectory');
+      assert.equal(calls.length, 2);
+      assert.deepEqual(calls[1].center, { x: 6, y: 6, z: 6 });
+      assert.equal(calls[1].radius, Math.hypot(2, 2, 2) / 2);
+
+      tool.snapCameraToPath('missing/path'); // unknown key: no call
+      assert.equal(calls.length, 2);
+      tool.onDetach();
+    },
+  },
+  {
+    name: 'snapCameraToPath without focusOn falls back to camera position + lookAt',
+    run: () => {
+      const camera = new PerspectiveCamera();
+      camera.position.set(0, 0, 0);
+      const context: ToolContext = { scene: new Scene(), camera, requestRender: () => {} };
+      const tool = new DvizPathTool();
+      tool.onAttach(context);
+      tool.onBatch(batch('planner', 'trajectory', 100, f32([0, 0, 0, 1, 2, 3])));
+
+      assert.doesNotThrow(() => tool.snapCameraToPath('planner/trajectory'));
+      const radius = Math.hypot(1, 2, 3) / 2;
+      assert.deepEqual(
+        [camera.position.x, camera.position.y, camera.position.z],
+        [0.5 + radius * 1.75, 1 - radius * 2.15, 1.5 + radius * 1.1],
+      );
+      assert.ok(camera.position.lengthSq() > 0); // moved off the origin
+      tool.onDetach();
+    },
+  },
+  {
+    name: 'snapCameraToPath before attach is a no-op and does not throw',
+    run: () => {
+      const tool = new DvizPathTool();
+      assert.doesNotThrow(() => tool.snapCameraToPath('planner/waypoints'));
     },
   },
 ];

@@ -511,6 +511,7 @@ function toggleTool(id: string, enable: boolean) {
       scene,
       camera,
       requestRender: () => viewer?.requestRender(),
+      focusOn: (center, radius) => viewer?.focusOn(center, radius),
     })
   } else {
     toolRegistry.detachFromScene(id)

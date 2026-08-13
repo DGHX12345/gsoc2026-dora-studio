@@ -676,5 +676,33 @@ defineExpose({
   getScene: () => scene,
   getCamera: () => camera,
   requestRender,
+  // M12 R5: snap the view to a world-space center + radius. Syncs the
+  // OrbitControls target so the framing survives the next user drag; falls
+  // back to a bare position + lookAt when controls are unavailable.
+  focusOn: (center: { x: number; y: number; z: number }, radius: number) => {
+    if (!camera) return
+    const safeRadius = radius > 0 ? radius : 1
+    if (!controls) {
+      camera.position.set(
+        center.x + safeRadius * 1.75,
+        center.y - safeRadius * 2.15,
+        center.z + safeRadius * 1.1,
+      )
+      camera.lookAt(center.x, center.y, center.z)
+      requestRender()
+      return
+    }
+    controls.target.set(center.x, center.y, center.z)
+    camera.position.set(
+      center.x + safeRadius * 1.75,
+      center.y - safeRadius * 2.15,
+      center.z + safeRadius * 1.1,
+    )
+    camera.near = Math.max(0.01, safeRadius / 100)
+    camera.far = Math.max(20, safeRadius * 60)
+    camera.updateProjectionMatrix()
+    controls.update()
+    requestRender()
+  },
 })
 </script>

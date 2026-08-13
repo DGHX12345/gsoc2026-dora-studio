@@ -42,6 +42,9 @@ export interface ToolContext {
   scene: THREE.Scene;
   camera: THREE.Camera;
   requestRender: () => void;
+  /** Revision R5 (M12): optional camera-focus helper with OrbitControls
+   * target sync, provided by the viewer when available. */
+  focusOn?: (center: { x: number; y: number; z: number }, radius: number) => void;
 }
 
 export interface ViewportTool {

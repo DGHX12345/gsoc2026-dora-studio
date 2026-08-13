@@ -43,6 +43,40 @@ const CONE_RADIUS = 0.015;
 const CONE_HEIGHT = 0.05;
 const CONE_SEGMENTS = 8;
 
+/** Pure helper: bounding box of flat xyz points → { center, radius }.
+ * radius = half-diagonal of the box (covers all points). */
+export function computePathBounds(points: number[]): {
+  center: { x: number; y: number; z: number };
+  radius: number;
+} {
+  if (points.length === 0) return { center: { x: 0, y: 0, z: 0 }, radius: 0 };
+  let minX = Infinity;
+  let minY = Infinity;
+  let minZ = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  let maxZ = -Infinity;
+  for (let i = 0; i < points.length; i += 3) {
+    const x = points[i];
+    const y = points[i + 1];
+    const z = points[i + 2];
+    if (x < minX) minX = x;
+    if (y < minY) minY = y;
+    if (z < minZ) minZ = z;
+    if (x > maxX) maxX = x;
+    if (y > maxY) maxY = y;
+    if (z > maxZ) maxZ = z;
+  }
+  return {
+    center: {
+      x: (minX + maxX) / 2,
+      y: (minY + maxY) / 2,
+      z: (minZ + maxZ) / 2,
+    },
+    radius: Math.hypot(maxX - minX, maxY - minY, maxZ - minZ) / 2,
+  };
+}
+
 /** Replay staleness: no fresh data at the current timeline position. */
 export function computeStaleness(
   seekTs: number | null,
@@ -78,6 +112,8 @@ interface PathState {
   outputId: string;
   kind: 'primary' | 'alternative';
   colorHex: number;
+  /** Last parsed flat xyz triplets, kept for camera framing (M12 D4). */
+  points: number[];
   group: Group;
   line: Line2;
   lineGeometry: LineGeometry;
@@ -232,6 +268,27 @@ export class DvizPathTool implements ViewportTool {
     this.notify();
   }
 
+  /** M12 D4: frame the camera on the path's current points. Uses
+   * context.focusOn (OrbitControls-target synced) when the viewer provides
+   * it; otherwise falls back to a bare camera position + lookAt. No-op when
+   * the path is unknown or has no points. */
+  snapCameraToPath(key: string) {
+    const path = this.paths.get(key);
+    if (!path || path.points.length === 0 || !this.context) return;
+    const { center, radius } = computePathBounds(path.points);
+    if (this.context.focusOn) {
+      this.context.focusOn(center, radius);
+      return;
+    }
+    this.context.camera.position.set(
+      center.x + radius * 1.75,
+      center.y - radius * 2.15,
+      center.z + radius * 1.1,
+    );
+    this.context.camera.lookAt(center.x, center.y, center.z);
+    this.context.requestRender();
+  }
+
   // -------------------------------------------------------------------------
   // Internals
 
@@ -321,6 +378,7 @@ export class DvizPathTool implements ViewportTool {
       outputId,
       kind,
       colorHex,
+      points: [],
       group,
       line,
       lineGeometry,
@@ -338,6 +396,7 @@ export class DvizPathTool implements ViewportTool {
   }
 
   private updatePath(path: PathState, points: number[], timestampNs: number) {
+    path.points = points;
     path.lineGeometry.setPositions(points);
     if (path.lineMaterial.dashed) {
       // Line distances drive the dash rendering (only dashes need them;
