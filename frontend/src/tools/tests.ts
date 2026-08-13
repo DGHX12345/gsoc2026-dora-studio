@@ -1,0 +1,7 @@
+// Aggregated tool-slot test runner: each imported module self-executes its
+// test list and sets process.exitCode on failure.
+
+import './tf.test';
+import './matching.test';
+import './registry.test';
+import './feed.test';

@@ -7,7 +7,8 @@
     "dev": "vite --host 0.0.0.0",
     "build": "vue-tsc --noEmit && vite build",
     "preview": "vite preview --host 0.0.0.0",
-    "test:motion": "tsx src/lib/nanoRobotMotion.test.ts"
+    "test:motion": "tsx src/lib/nanoRobotMotion.test.ts",
+    "test:tools": "tsx src/tools/tests.ts"
   },
   "dependencies": {
     "three": "^0.185.1",
