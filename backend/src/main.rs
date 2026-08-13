@@ -6,6 +6,7 @@ mod dataflow_builder;
 mod dataflows;
 mod drec;
 mod external;
+mod lerobot;
 mod metrics;
 mod models;
 mod otel;
