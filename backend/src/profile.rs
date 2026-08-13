@@ -27,6 +27,14 @@ pub enum ProfileError {
     Parse(String),
 }
 
+impl std::fmt::Display for ProfileError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Parse(msg) => write!(f, "profile error: {msg}"),
+        }
+    }
+}
+
 pub fn parse_profile_yaml(text: &str) -> Result<RobotProfile, ProfileError> {
     let err = |msg: &str| ProfileError::Parse(msg.to_string());
 
@@ -152,6 +160,61 @@ pub fn profile_score(profile: &RobotProfile, columns: &[String]) -> f32 {
     matched as f32 / total.max(1) as f32
 }
 
+pub struct ProfileManager {
+    dir: PathBuf,
+}
+
+impl ProfileManager {
+    pub fn new(dir: &Path) -> Self {
+        Self {
+            dir: dir.to_path_buf(),
+        }
+    }
+
+    /// 返回去前缀（lerobot_profile_）、去 .yaml 后缀的 profile 名列表。
+    pub fn list(&self) -> Result<Vec<String>, ProfileError> {
+        let mut names = Vec::new();
+        for entry in std::fs::read_dir(&self.dir)
+            .map_err(|e| ProfileError::Parse(e.to_string()))?
+        {
+            let name = entry
+                .map_err(|e| ProfileError::Parse(e.to_string()))?
+                .file_name();
+            let name = name.to_string_lossy().to_string();
+            if let Some(stem) = name
+                .strip_prefix("lerobot_profile_")
+                .and_then(|s| s.strip_suffix(".yaml"))
+            {
+                names.push(stem.to_string());
+            }
+        }
+        names.sort();
+        Ok(names)
+    }
+
+    pub fn load(&self, name: &str) -> Result<RobotProfile, ProfileError> {
+        let path = self.dir.join(format!("lerobot_profile_{name}.yaml"));
+        let text = std::fs::read_to_string(&path)
+            .map_err(|e| ProfileError::Parse(format!("profile '{name}': {e}")))?;
+        parse_profile_yaml(&text)
+    }
+
+    /// 按 profile_score 返回最高分建议；无 profile 得分 ≥ 0.5 时返回 None。
+    pub fn autodetect(&self, columns: &[String]) -> Result<Option<(String, f32)>, ProfileError> {
+        let mut best: Option<(String, f32)> = None;
+        for name in self.list()? {
+            let profile = self.load(&name)?;
+            let score = profile_score(&profile, columns);
+            if best.as_ref().map(|(_, s)| score > *s).unwrap_or(true) {
+                best = Some((name, score));
+            }
+        }
+        Ok(best.filter(|(_, s)| *s >= 0.5))
+    }
+}
+
+use std::path::{Path, PathBuf};
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -217,5 +280,43 @@ joint_mapping:
         ];
         // score = matched / profile 定义的字段数；a 应高于 b
         assert!(profile_score(&a, &columns) > profile_score(&b, &columns));
+    }
+
+    #[test]
+    fn profile_manager_lists_and_loads_profiles() {
+        let dir = std::env::temp_dir().join("dora-studio-tests/profiles_test");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("lerobot_profile_testa.yaml"), B601_YAML).unwrap();
+        std::fs::write(dir.join("not_a_profile.txt"), "x").unwrap();
+        let mgr = ProfileManager::new(&dir);
+        let names = mgr.list().unwrap();
+        assert_eq!(names, vec!["testa".to_string()]);
+        let p = mgr.load("testa").unwrap();
+        assert_eq!(p.robot_name, "B601");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn profile_manager_autodetect_suggests_best_match() {
+        let dir = std::env::temp_dir().join("dora-studio-tests/profiles_test2");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("lerobot_profile_best.yaml"), B601_YAML).unwrap();
+        std::fs::write(
+            dir.join("lerobot_profile_worst.yaml"),
+            "robot: X\nfields:\n  state: [qpos]\n  action: [qvel]\njoint_mapping:\n  arm_joints: [0]\n",
+        )
+        .unwrap();
+        let mgr = ProfileManager::new(&dir);
+        let columns = vec![
+            "observation.state".to_string(),
+            "action".to_string(),
+            "task_index".to_string(),
+            "timestamp".to_string(),
+            "frame_index".to_string(),
+        ];
+        let (name, score) = mgr.autodetect(&columns).unwrap().expect("suggestion");
+        assert_eq!(name, "best");
+        assert!(score > 0.9);
+        std::fs::remove_dir_all(&dir).ok();
     }
 }
