@@ -53,6 +53,7 @@ const pageSize = 200
 const lerobotTotal = ref(0)
 const lerobotChains = ref<AttributionChainResponse[]>([])
 const lerobotSummaries = ref<{ timestampNanos: number; success: boolean | null; stepCount: number }[]>([])
+const lerobotAngleUnit = ref<'radians' | 'degrees'>('radians')
 
 const expandedText = ref<Record<string, boolean>>({})
 
@@ -185,6 +186,7 @@ async function loadLerobotEpisode() {
     lerobotChains.value = result.chains
     lerobotSummaries.value = result.summaries
     lerobotTotal.value = result.total
+    lerobotAngleUnit.value = result.angleUnit ?? 'radians'
     selectedTs.value = null
     detail.value = null
     stopTokenStream()
@@ -204,7 +206,13 @@ function onShowIn3d() {
   if (selectedTs.value === null) return
   if (source.value === 'lerobot') {
     const action = detail.value?.steps.find((s) => s.kind === 'parsedAction')
-    if (action?.kind === 'parsedAction') emit('apply-action', action.vector)
+    if (action?.kind === 'parsedAction') {
+      const degToRad = Math.PI / 180
+      const vector = lerobotAngleUnit.value === 'degrees'
+        ? action.vector.map((v) => v * degToRad)
+        : action.vector
+      emit('apply-action', vector)
+    }
   } else {
     emit('seek-timestamp', selectedTs.value)
   }
@@ -408,6 +416,7 @@ const currentSourceHint = computed(() => (
           <div v-if="detailLoading" class="attr-detail-body">…</div>
           <div v-else-if="detailError" class="attr-detail-body error">{{ t.attribution.noDetail }}: {{ detailError }}</div>
           <div v-else-if="detail" class="attr-detail-body">
+            <span v-if="source === 'lerobot'" class="attr-note">{{ t.attribution.nanoPreviewNote }}</span>
             <!-- Step: SensorFrame -->
             <div class="attr-step">
               <span class="attr-step-num">1</span>
@@ -484,6 +493,7 @@ const currentSourceHint = computed(() => (
                 <template v-if="detail.steps[3]?.kind === 'parsedAction'">
                   <div class="attr-chips">
                     <span class="attr-chip mono">{{ detail.steps[3].actionType }}</span>
+                    <span v-if="source === 'lerobot'" class="attr-chip mono">{{ lerobotAngleUnit === 'degrees' ? 'deg' : 'rad' }}</span>
                     <span class="attr-chip">{{ t.attribution.confidence }} {{ detail.steps[3].confidence != null ? (detail.steps[3].confidence * 100).toFixed(0) + '%' : 'n/a' }}</span>
                   </div>
                   <table class="attr-table">

@@ -655,6 +655,7 @@ export type LerobotAttributionResponse = {
   total: number
   profile: string
   tasks: Record<number, string>
+  angleUnit: 'radians' | 'degrees'
 }
 
 export function getLerobotStatus() {

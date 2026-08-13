@@ -64,6 +64,7 @@ type Messages = {
     page: string
     of: string
     datasetScanFailed: string
+    nanoPreviewNote: string
   }
 }
 
@@ -133,6 +134,7 @@ const messages: Record<Locale, Messages> = {
       page: '页',
       of: '/',
       datasetScanFailed: '数据集扫描失败',
+      nanoPreviewNote: '该动作在 Nano 模型上预览（暂无 B601 模型，接入见 M13）',
     },
   },
   en: {
@@ -200,6 +202,7 @@ const messages: Record<Locale, Messages> = {
       page: 'Page',
       of: 'of',
       datasetScanFailed: 'Dataset scan failed',
+      nanoPreviewNote: 'Previewed on the Nano model (no B601 model yet; see M13)',
     },
   },
 }

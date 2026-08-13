@@ -1,5 +1,6 @@
 # B601 arm profile — validated against the real b601_pilot_v1 dataset (M10)
 robot: B601
+angle_unit: degrees
 fields:
   state: [observation.state, observations/state, obs.state]
   action: [action]

@@ -945,7 +945,7 @@ async fn lerobot_attribution(
                 message: "no matching robot profile; add one under profiles/".to_string(),
             })?,
     };
-    state
+    let profile = state
         .profiles
         .load(&profile_name)
         .map_err(|e| lerobot_api_error(e.to_string()))?;
@@ -970,6 +970,7 @@ async fn lerobot_attribution(
         "total": total,
         "profile": profile_name,
         "tasks": info.tasks,
+        "angleUnit": profile.angle_unit.as_str(),
     })))
 }
 

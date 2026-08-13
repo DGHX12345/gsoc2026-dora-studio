@@ -15,11 +15,27 @@ pub struct JointMapping {
     pub gripper: Option<usize>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AngleUnit {
+    Radians,
+    Degrees,
+}
+
+impl AngleUnit {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Radians => "radians",
+            Self::Degrees => "degrees",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct RobotProfile {
     pub robot_name: String,
     pub fields: FieldAliases,
     pub joint_mapping: JointMapping,
+    pub angle_unit: AngleUnit,
 }
 
 #[derive(Debug)]
@@ -46,6 +62,7 @@ pub fn parse_profile_yaml(text: &str) -> Result<RobotProfile, ProfileError> {
     let mut frame_index = Vec::new();
     let mut arm_joints = Vec::new();
     let mut gripper = None;
+    let mut angle_unit = AngleUnit::Radians;
     let mut section = "";
 
     for raw in text.lines() {
@@ -68,6 +85,14 @@ pub fn parse_profile_yaml(text: &str) -> Result<RobotProfile, ProfileError> {
 
         if section.is_empty() && key == "robot" {
             robot_name = Some(value.to_string());
+            continue;
+        }
+        if key == "angle_unit" {
+            angle_unit = match value {
+                "degrees" => AngleUnit::Degrees,
+                "radians" => AngleUnit::Radians,
+                other => return Err(err(&format!("unknown angle_unit '{other}'"))),
+            };
             continue;
         }
 
@@ -103,6 +128,7 @@ pub fn parse_profile_yaml(text: &str) -> Result<RobotProfile, ProfileError> {
             arm_joints,
             gripper,
         },
+        angle_unit,
     })
 }
 
@@ -294,6 +320,14 @@ joint_mapping:
         let p = mgr.load("testa").unwrap();
         assert_eq!(p.robot_name, "B601");
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn parses_angle_unit_degrees_and_defaults_to_radians() {
+        let deg = parse_profile_yaml(&format!("{B601_YAML}\nangle_unit: degrees\n")).unwrap();
+        assert_eq!(deg.angle_unit, AngleUnit::Degrees);
+        let rad = parse_profile_yaml(B601_YAML).unwrap();
+        assert_eq!(rad.angle_unit, AngleUnit::Radians);
     }
 
     #[test]
