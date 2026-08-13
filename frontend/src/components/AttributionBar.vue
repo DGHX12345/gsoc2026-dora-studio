@@ -307,58 +307,59 @@ const currentSourceHint = computed(() => (
     </header>
 
     <div v-show="!collapsed" class="attr-body">
-      <!-- Loading / error / empty states -->
-      <div v-if="summaryLoading" class="attr-state">…</div>
+      <!-- LeRobot controls (M10) — visible as soon as the source is selected -->
+      <div v-if="source === 'lerobot'" class="attr-lerobot">
+        <div class="attr-lerobot-row">
+          <input
+            v-model="lerobotPath"
+            class="attr-lerobot-path"
+            :placeholder="'/path/to/dataset (e.g. ~/.cache/huggingface/lerobot/my_org/b601_pilot_v1)'"
+            @keyup.enter="runLerobotScan"
+          />
+          <button class="attr-cta" type="button" :disabled="lerobotScanning" @click="runLerobotScan">
+            {{ lerobotScanning ? t.attribution.scanning : t.attribution.scan }}
+          </button>
+        </div>
+        <div v-if="lerobotError" class="attr-state error">{{ lerobotError }}</div>
+        <div v-if="dataset" class="attr-lerobot-info">
+          <span class="attr-chip">{{ dataset.name }}</span>
+          <span class="attr-chip">{{ dataset.layout }}</span>
+          <span class="attr-chip">{{ dataset.episodes.length }} {{ t.attribution.episodes }}</span>
+          <span class="attr-chip mono">{{ dataset.columns.length }} cols</span>
+        </div>
+        <div v-if="dataset" class="attr-lerobot-row">
+          <label class="attr-source">
+            <span class="attr-source-label">{{ t.attribution.profile }}</span>
+            <select v-model="selectedProfile" class="attr-source-select" @change="pageOffset = 0; loadLerobotEpisode()">
+              <option v-for="p in profiles" :key="p.name" :value="p.name">{{ p.robot }} ({{ p.name }})</option>
+            </select>
+          </label>
+          <label class="attr-source">
+            <span class="attr-source-label">Episode</span>
+            <select v-model="selectedEpisode" class="attr-source-select" @change="pageOffset = 0; loadLerobotEpisode()">
+              <option v-for="e in dataset.episodes" :key="e.index" :value="e.index">
+                #{{ e.index }} · {{ e.rows }} {{ t.attribution.frames }}
+              </option>
+            </select>
+          </label>
+          <span class="attr-detail-spacer"></span>
+          <button v-if="lerobotTotal > pageSize" class="attr-nav" type="button" :disabled="pageOffset === 0" @click="lerobotPage(-1)">‹</button>
+          <span v-if="lerobotTotal > pageSize" class="attr-chip">
+            {{ t.attribution.page }} {{ pageOffset / pageSize + 1 }} {{ t.attribution.of }} {{ Math.ceil(lerobotTotal / pageSize) }}
+          </span>
+          <button v-if="lerobotTotal > pageSize" class="attr-nav" type="button" :disabled="pageOffset + pageSize >= lerobotTotal" @click="lerobotPage(1)">›</button>
+        </div>
+      </div>
+
+      <!-- Loading / error / empty states (drec source) -->
+      <div v-if="source === 'drec' && summaryLoading" class="attr-state">…</div>
       <div v-else-if="source === 'drec' && summaryError" class="attr-state error">{{ summaryError }}</div>
       <div v-else-if="!chains.length" class="attr-state empty">
-        <strong>{{ source === 'lerobot' ? t.attribution.datasetScanFailed : t.attribution.empty }}</strong>
-        <span>{{ source === 'lerobot' ? `${t.attribution.datasetPath} → ${t.attribution.scan}` : t.attribution.emptyHint }}</span>
+        <strong>{{ t.attribution.empty }}</strong>
+        <span>{{ t.attribution.emptyHint }}</span>
       </div>
 
       <template v-else>
-        <!-- LeRobot controls (M10) -->
-        <div v-if="source === 'lerobot'" class="attr-lerobot">
-          <div class="attr-lerobot-row">
-            <input
-              v-model="lerobotPath"
-              class="attr-lerobot-path"
-              :placeholder="'/path/to/dataset (e.g. ~/.cache/huggingface/lerobot/my_org/b601_pilot_v1)'"
-              @keyup.enter="runLerobotScan"
-            />
-            <button class="attr-cta" type="button" :disabled="lerobotScanning" @click="runLerobotScan">
-              {{ lerobotScanning ? t.attribution.scanning : t.attribution.scan }}
-            </button>
-          </div>
-          <div v-if="lerobotError" class="attr-state error">{{ lerobotError }}</div>
-          <div v-if="dataset" class="attr-lerobot-info">
-            <span class="attr-chip">{{ dataset.name }}</span>
-            <span class="attr-chip">{{ dataset.layout }}</span>
-            <span class="attr-chip">{{ dataset.episodes.length }} {{ t.attribution.episodes }}</span>
-            <span class="attr-chip mono">{{ dataset.columns.length }} cols</span>
-          </div>
-          <div v-if="dataset" class="attr-lerobot-row">
-            <label class="attr-source">
-              <span class="attr-source-label">{{ t.attribution.profile }}</span>
-              <select v-model="selectedProfile" class="attr-source-select" @change="pageOffset = 0; loadLerobotEpisode()">
-                <option v-for="p in profiles" :key="p.name" :value="p.name">{{ p.robot }} ({{ p.name }})</option>
-              </select>
-            </label>
-            <label class="attr-source">
-              <span class="attr-source-label">Episode</span>
-              <select v-model="selectedEpisode" class="attr-source-select" @change="pageOffset = 0; loadLerobotEpisode()">
-                <option v-for="e in dataset.episodes" :key="e.index" :value="e.index">
-                  #{{ e.index }} · {{ e.rows }} {{ t.attribution.frames }}
-                </option>
-              </select>
-            </label>
-            <span class="attr-detail-spacer"></span>
-            <button v-if="lerobotTotal > pageSize" class="attr-nav" type="button" :disabled="pageOffset === 0" @click="lerobotPage(-1)">‹</button>
-            <span v-if="lerobotTotal > pageSize" class="attr-chip">
-              {{ t.attribution.page }} {{ pageOffset / pageSize + 1 }} {{ t.attribution.of }} {{ Math.ceil(lerobotTotal / pageSize) }}
-            </span>
-            <button v-if="lerobotTotal > pageSize" class="attr-nav" type="button" :disabled="pageOffset + pageSize >= lerobotTotal" @click="lerobotPage(1)">›</button>
-          </div>
-        </div>
         <!-- Icon chain strip -->
         <div class="attr-strip" role="list">
           <button

@@ -121,9 +121,9 @@
           viewer-label="Nano RobotModel"
         />
 
-        <!-- M09: attribution bar (replay mode, above the floating replay bar) -->
+        <!-- M09/M10: attribution bar (replay mode, above the floating replay bar) -->
         <AttributionBar
-          v-if="viewportMode === 'replay' && replayActive"
+          v-if="viewportMode === 'replay'"
           :recording-id="replayRecordingId"
           :current-timestamp="replayCurrentTime"
           @seek-timestamp="(ts: number) => replayEngine?.seek(ts, true)"
