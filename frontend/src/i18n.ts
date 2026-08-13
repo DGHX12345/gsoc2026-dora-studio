@@ -51,6 +51,19 @@ type Messages = {
     tokenStream: string
     replayStream: string
     noDetail: string
+    datasetPath: string
+    scan: string
+    scanning: string
+    episodes: string
+    profile: string
+    autoDetect: string
+    loadEpisode: string
+    frames: string
+    noImageData: string
+    notAvailable: string
+    page: string
+    of: string
+    datasetScanFailed: string
   }
 }
 
@@ -107,6 +120,19 @@ const messages: Record<Locale, Messages> = {
       tokenStream: 'Token 流回放',
       replayStream: '重放 token 流',
       noDetail: '详情加载失败',
+      datasetPath: '数据集路径',
+      scan: '扫描',
+      scanning: '扫描中…',
+      episodes: 'episodes',
+      profile: '配置',
+      autoDetect: '自动检测',
+      loadEpisode: '加载 Episode',
+      frames: '帧',
+      noImageData: '无图像数据',
+      notAvailable: '数据集中未记录',
+      page: '页',
+      of: '/',
+      datasetScanFailed: '数据集扫描失败',
     },
   },
   en: {
@@ -161,6 +187,19 @@ const messages: Record<Locale, Messages> = {
       tokenStream: 'Token stream',
       replayStream: 'Replay token stream',
       noDetail: 'Failed to load detail',
+      datasetPath: 'Dataset path',
+      scan: 'Scan',
+      scanning: 'Scanning…',
+      episodes: 'episodes',
+      profile: 'Profile',
+      autoDetect: 'Auto-detect',
+      loadEpisode: 'Load episode',
+      frames: 'frames',
+      noImageData: 'No image data',
+      notAvailable: 'Not available in this dataset',
+      page: 'Page',
+      of: 'of',
+      datasetScanFailed: 'Dataset scan failed',
     },
   },
 }

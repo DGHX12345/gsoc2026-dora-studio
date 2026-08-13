@@ -607,6 +607,85 @@ export function getAttributionChain(recordingId: string, timestampNanos: number)
   )
 }
 
+// --- lerobot (M10) ---
+
+export type LerobotStatusResponse = {
+  pythonAvailable: boolean
+  pyarrowAvailable: boolean
+  message: string
+}
+
+export type LerobotEpisodeResponse = {
+  index: number
+  rows: number
+  startNs: number
+  endNs: number
+}
+
+export type LerobotDatasetResponse = {
+  name: string
+  layout: string
+  columns: string[]
+  episodes: LerobotEpisodeResponse[]
+  tasks: Record<number, string>
+  hasImageColumns: boolean
+}
+
+export type LerobotFrameResponse = {
+  frameIndex: number
+  timestampNs: number
+  taskIndex: number | null
+  action: number[]
+  state: number[]
+}
+
+export type LerobotFramesResponse = { frames: LerobotFrameResponse[]; total: number }
+
+export type LerobotProfileResponse = { name: string; robot: string }
+
+export type LerobotAutodetectResponse = {
+  columns: string[]
+  suggestedProfile: string | null
+  score: number | null
+}
+
+export type LerobotAttributionResponse = {
+  chains: AttributionChainResponse[]
+  summaries: { timestampNanos: number; success: boolean | null; stepCount: number }[]
+  total: number
+  profile: string
+  tasks: Record<number, string>
+}
+
+export function getLerobotStatus() {
+  return fetchJson<LerobotStatusResponse>('/lerobot/status')
+}
+
+export function scanLerobotDataset(path: string) {
+  return fetchJson<LerobotDatasetResponse>('/lerobot/scan', {
+    method: 'POST', headers: JSON_HEADER, body: JSON.stringify({ path }),
+  })
+}
+
+export function getLerobotProfiles() {
+  return fetchJson<{ profiles: LerobotProfileResponse[] }>('/lerobot/profiles')
+}
+
+export function autodetectLerobotProfile(path: string) {
+  return fetchJson<LerobotAutodetectResponse>('/lerobot/autodetect', {
+    method: 'POST', headers: JSON_HEADER, body: JSON.stringify({ path }),
+  })
+}
+
+export function getLerobotAttribution(
+  path: string, episode: number, offset = 0, limit = 200, profile?: string,
+) {
+  return fetchJson<LerobotAttributionResponse>('/lerobot/attribution', {
+    method: 'POST', headers: JSON_HEADER,
+    body: JSON.stringify({ path, episode, offset, limit, ...(profile ? { profile } : {}) }),
+  })
+}
+
 // --- metrics (M07) ---
 
 export type NodeMetricSampleResponse = {
