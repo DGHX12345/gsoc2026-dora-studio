@@ -418,6 +418,7 @@ function syncRendererSize() {
   renderer.setSize(clientWidth, clientHeight, false)
   camera.aspect = clientWidth / clientHeight
   camera.updateProjectionMatrix()
+  requestRender()
 }
 
 function frameCameraToModel() {
@@ -527,14 +528,53 @@ async function initializeScene() {
   syncRendererSize()
 }
 
-function animate() {
-  if (disposed || !renderer || !scene || !camera) {
-    return
-  }
+// On-demand rendering: only re-render when something changes (orbit, joint, resize).
+// Saves GPU when the viewport is idle.
+let renderNeeded = true
+let renderScheduled = false
 
-  controls?.update()
-  renderer.render(scene, camera)
-  animationFrame = window.requestAnimationFrame(animate)
+function requestRender() {
+  renderNeeded = true
+  if (renderScheduled || disposed) return
+  renderScheduled = true
+  animationFrame = window.requestAnimationFrame(() => {
+    renderScheduled = false
+    if (disposed || !renderer || !scene || !camera) return
+    if (renderNeeded) {
+      controls?.update()
+      renderer.render(scene, camera)
+      renderNeeded = false
+    }
+    // If still needed (e.g. animation playing), schedule next frame
+    if (renderNeeded) {
+      renderScheduled = true
+      animationFrame = window.requestAnimationFrame(() => {
+        renderScheduled = false
+        if (!disposed && renderNeeded && renderer && scene && camera) {
+          controls?.update()
+          renderer.render(scene, camera)
+          renderNeeded = false
+        }
+      })
+    }
+  })
+}
+
+// Keep rendering while user is orbiting
+function startContinuousRender() {
+  renderNeeded = true
+  function step() {
+    if (!renderNeeded || disposed) return
+    requestRender()
+    if (renderNeeded) {
+      animationFrame = window.requestAnimationFrame(step)
+    }
+  }
+  step()
+}
+
+function stopContinuousRender() {
+  renderNeeded = false
 }
 
 async function loadAndRenderModel() {
@@ -576,6 +616,7 @@ watch(
   () => props.jointValues,
   () => {
     applyJointValues()
+    requestRender()
   },
   { deep: true },
 )
@@ -584,6 +625,7 @@ watch(
   () => props.basePose,
   () => {
     applyBasePose()
+    requestRender()
   },
   { deep: true },
 )
@@ -591,8 +633,18 @@ watch(
 onMounted(async () => {
   try {
     await initializeScene()
-    animate()
+    requestRender()
     await loadAndRenderModel()
+
+    // On-demand rendering: only loop while user interacts with orbit controls
+    const canvas = canvasRef.value
+    if (canvas) {
+      canvas.addEventListener('mousedown', startContinuousRender)
+      canvas.addEventListener('touchstart', startContinuousRender)
+      canvas.addEventListener('wheel', () => { requestRender(); startContinuousRender() })
+      window.addEventListener('mouseup', stopContinuousRender)
+      window.addEventListener('touchend', stopContinuousRender)
+    }
   } catch (error) {
     viewerState.value = 'error'
     viewerMessage.value = 'Nano full viewer failed to load.'

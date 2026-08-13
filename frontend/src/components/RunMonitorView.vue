@@ -52,7 +52,7 @@
     <article class="panel">
       <div class="panel-header">
         <h2>Node Status</h2>
-        <span class="pill">Metrics unavailable</span>
+        <span class="pill">Requires dora daemon</span>
       </div>
       <div class="table-wrap">
         <table>

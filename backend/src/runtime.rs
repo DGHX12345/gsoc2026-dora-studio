@@ -107,6 +107,30 @@ impl RuntimeManager {
         self.status().await
     }
 
+    /// Run a YAML string by writing it to a temp file and starting dora run.
+    pub async fn run_yaml(self: &Arc<Self>, yaml: &str, name: &str) -> RuntimeState {
+        let dir = repo_root().join(".dora-studio-tmp");
+        let _ = std::fs::create_dir_all(&dir);
+
+        let path = dir.join(format!("{name}.yml"));
+        if let Err(e) = std::fs::write(&path, yaml) {
+            return RuntimeState {
+                status: "failed".to_string(),
+                pid: None,
+                last_message: format!("Failed to write YAML to temp file: {e}"),
+                dataflow_id: Some(name.to_string()),
+                dataflow_path: Some(format!(".dora-studio-tmp/{name}.yml")),
+            };
+        }
+
+        self.start_dataflow(
+            name.to_string(),
+            path,
+            format!(".dora-studio-tmp/{name}.yml"),
+        )
+        .await
+    }
+
     pub async fn start(self: &Arc<Self>) -> RuntimeState {
         self.start_dataflow(
             "robot-perception-test".to_string(),

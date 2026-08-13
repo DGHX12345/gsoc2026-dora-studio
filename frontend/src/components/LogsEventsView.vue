@@ -73,16 +73,16 @@
       </article>
     </div>
 
-    <article class="panel terminal-panel large-terminal compact-terminal">
-      <div class="panel-header">
-        <h2>Raw Stream</h2>
-        <button v-if="logs.length > previewLimit" class="terminal-view-all" @click="openLogModal('all')">View all</button>
-      </div>
+    <details class="panel terminal-panel large-terminal compact-terminal collapsible">
+      <summary class="panel-header">
+        <h2>All Logs (Raw Output)</h2>
+        <button v-if="logs.length > previewLimit" class="terminal-view-all" @click.prevent="openLogModal('all')">View all</button>
+      </summary>
       <div v-if="logs.length === 0" class="empty-terminal">
         No log output yet. Start a dataflow from Run &amp; Monitor to see logs here.
       </div>
       <LogLine v-for="log in previewAllLogs" :key="logKey(log)" :log="log" variant="terminal" />
-    </article>
+    </details>
 
     <Teleport to="body">
       <div v-if="modalType" class="log-modal-backdrop" @click.self="closeLogModal">

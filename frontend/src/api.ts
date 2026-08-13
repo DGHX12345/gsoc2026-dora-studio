@@ -378,3 +378,300 @@ export function getMoveitStatus(fallback: MoveitStatusResponse) {
 export function getMoveitSnapshot(fallback: MoveitSnapshotResponse) {
   return withFallback('/moveit/snapshot', fallback)
 }
+
+// --- daemon ---
+
+export type DaemonStatusResponse = {
+  running: boolean
+  pid: number | null
+}
+
+export function getDaemonStatus(fallback: DaemonStatusResponse) {
+  return withFallback('/daemon/status', fallback)
+}
+
+export function startDaemon() {
+  return fetchJson<DaemonStatusResponse>('/daemon/start', { method: 'POST' })
+}
+
+export function stopDaemon() {
+  return fetchJson<DaemonStatusResponse>('/daemon/stop', { method: 'POST' })
+}
+
+// --- dataflow builder (M01) ---
+
+export type DataflowGraph = {
+  nodes: Array<{
+    id: string; operator_id: string; runtime: string;
+    inputs: Record<string, { type?: string; description?: string }>;
+    outputs: Record<string, { type?: string; description?: string }>;
+    position?: { x: number; y: number };
+  }>
+  edges: Array<{
+    id: string; source_node: string; source_port: string;
+    target_node: string; target_port: string;
+  }>
+}
+
+export type BuildResponse = { yaml: string; node_count: number; edge_count: number }
+export type ValidateResponse = { valid: boolean; errors: string[] }
+export type ParseResponse = { graph: DataflowGraph }
+
+const JSON_HEADER = { 'Content-Type': 'application/json' }
+
+export function buildDataflow(graph: DataflowGraph) {
+  return fetchJson<BuildResponse>('/dataflow/build', {
+    method: 'POST', headers: JSON_HEADER, body: JSON.stringify(graph),
+  })
+}
+
+export function validateDataflow(graph: DataflowGraph) {
+  return fetchJson<ValidateResponse>('/dataflow/validate', {
+    method: 'POST', headers: JSON_HEADER, body: JSON.stringify(graph),
+  })
+}
+
+export function parseDataflow(yaml: string) {
+  return fetchJson<ParseResponse>('/dataflow/parse', {
+    method: 'POST', headers: JSON_HEADER, body: JSON.stringify({ yaml }),
+  })
+}
+
+// --- schema registry (M02) ---
+
+export type SchemaCheckRequest = {
+  source_operator: string; source_port: string;
+  sink_operator: string; sink_port: string;
+}
+export type SchemaCheckResponse = { compatible: boolean; level: string; detail: string }
+export type OperatorSchemas = { operator: string; inputs: Array<{ port_name: string; port_type: string; description?: string }>; outputs: Array<{ port_name: string; port_type: string; description?: string }> }
+
+export function checkSchema(req: SchemaCheckRequest) {
+  return fetchJson<SchemaCheckResponse>('/schema/check', { method: 'POST', headers: JSON_HEADER, body: JSON.stringify(req) })
+}
+
+export function getOperatorSchema(name: string) {
+  return fetchJson<OperatorSchemas>(`/schema/operator/${encodeURIComponent(name)}`)
+}
+
+// --- runtime node status (M03) ---
+
+export type NodeRuntimeStatusResponse = {
+  nodeId: string
+  status: string
+  uptimeSecs: number | null
+  restartCount: number
+  cpuUsage: number | null
+  memoryMb: number | null
+  pendingMessages: number | null
+}
+
+export function getRuntimeNodeStatuses(dataflowId: string, fallback: NodeRuntimeStatusResponse[]) {
+  return withFallback(`/runtime/nodes/${encodeURIComponent(dataflowId)}`, fallback)
+}
+
+export type ReloadRequest = { nodeId: string; operatorId?: string }
+
+export function reloadNode(dataflowId: string, req: ReloadRequest) {
+  return fetchJson<{ ok: boolean; nodeId: string; message: string }>(
+    `/runtime/nodes/${encodeURIComponent(dataflowId)}/reload`,
+    { method: 'POST', headers: JSON_HEADER, body: JSON.stringify(req) }
+  )
+}
+
+export function runDataflow(yaml: string, name?: string) {
+  return fetchJson<RuntimeStateResponse>('/dataflow/run', {
+    method: 'POST', headers: JSON_HEADER, body: JSON.stringify({ yaml, name }),
+  })
+}
+
+// --- recording API (M04/M05) ---
+
+export type RecordingOpenedResponse = {
+  id: string
+  dataflowId: string
+  version: number
+  startNanos: number
+  messageCount: number
+  durationNanos: number
+  streamCount: number
+}
+
+export type StreamInfoResponse = {
+  nodeId: string
+  outputId: string
+  entryCount: number
+  timeRange: [number, number]
+}
+
+export type SeekEntryResponse = {
+  byteOffset: number
+  timestampNanos: number
+  nodeId: string
+  outputId: string
+  eventBytes?: number[]
+}
+
+export type RecordingEntriesResponse = {
+  entries: SeekEntryResponse[]
+  offset: number
+  limit: number
+  total: number
+}
+
+export function getRecordingEntriesWithData(
+  id: string,
+  params: { node?: string; output?: string; offset?: number; limit?: number } = {}
+) {
+  const qs = new URLSearchParams()
+  if (params.node) qs.set('node', params.node)
+  if (params.output) qs.set('output', params.output)
+  if (params.offset !== undefined) qs.set('offset', String(params.offset))
+  if (params.limit !== undefined) qs.set('limit', String(params.limit))
+  qs.set('include_data', 'true')
+  const q = qs.toString()
+  return fetchJson<RecordingEntriesResponse>(`/recording/${encodeURIComponent(id)}/entries?${q}`)
+}
+
+export function openRecording(path: string) {
+  return fetchJson<RecordingOpenedResponse>('/recording/open', {
+    method: 'POST', headers: JSON_HEADER, body: JSON.stringify({ path }),
+  })
+}
+
+export function getRecordingStreams(id: string) {
+  return fetchJson<{ streams: StreamInfoResponse[] }>(`/recording/${encodeURIComponent(id)}/streams`)
+}
+
+export function seekRecording(id: string, timestamp: number) {
+  return fetchJson<SeekEntryResponse>(`/recording/${encodeURIComponent(id)}/seek?timestamp=${timestamp}`)
+}
+
+export function getRecordingEntries(
+  id: string,
+  params: { node?: string; output?: string; offset?: number; limit?: number } = {}
+) {
+  const qs = new URLSearchParams()
+  if (params.node) qs.set('node', params.node)
+  if (params.output) qs.set('output', params.output)
+  if (params.offset !== undefined) qs.set('offset', String(params.offset))
+  if (params.limit !== undefined) qs.set('limit', String(params.limit))
+  const q = qs.toString()
+  return fetchJson<RecordingEntriesResponse>(`/recording/${encodeURIComponent(id)}/entries${q ? '?' + q : ''}`)
+}
+
+export function closeRecording(id: string) {
+  return fetchJson<{ ok: boolean }>(`/recording/${encodeURIComponent(id)}/close`, { method: 'POST' })
+}
+
+// --- attribution (M09) ---
+
+export type AttributionStepResponse =
+  | { kind: 'sensorFrame'; topic: string; width: number; height: number; encoding: string }
+  | { kind: 'prompt'; text: string; tokenCount: number }
+  | { kind: 'llmResponse'; text: string; tokenCount: number; model: string; latencyMs: number }
+  | { kind: 'parsedAction'; actionType: string; vector: number[]; confidence: number }
+  | { kind: 'executionResult'; success: boolean; errorMessage: string | null }
+
+export type AttributionChainResponse = {
+  timestampNanos: number
+  steps: AttributionStepResponse[]
+}
+
+export type AttributionChainSummaryResponse = {
+  timestampNanos: number
+  success: boolean
+  stepCount: number
+}
+
+export type UnparseableStreamResponse = {
+  nodeId: string
+  outputId: string
+  reason: string
+}
+
+export type AttributionSummaryResponse = {
+  chains: AttributionChainSummaryResponse[]
+  unparseableStreams: UnparseableStreamResponse[]
+}
+
+export function getAttributionSummary(recordingId: string) {
+  return fetchJson<AttributionSummaryResponse>(
+    `/recording/${encodeURIComponent(recordingId)}/attribution`,
+  )
+}
+
+export function getAttributionChain(recordingId: string, timestampNanos: number) {
+  return fetchJson<AttributionChainResponse>(
+    `/recording/${encodeURIComponent(recordingId)}/attribution/chain?timestamp=${timestampNanos}`,
+  )
+}
+
+// --- metrics (M07) ---
+
+export type NodeMetricSampleResponse = {
+  timestampSecs: number
+  cpuPercent: number
+  memoryMb: number
+  status: string
+  restartCount: number
+  pid: number | null
+}
+
+export type NodeMetricSummaryResponse = {
+  nodeId: string
+  dataflowName: string | null
+  current: NodeMetricSampleResponse
+  history: NodeMetricSampleResponse[]
+}
+
+export function getMetricsNodes(fallback: NodeMetricSummaryResponse[]) {
+  return withFallback('/metrics/nodes', fallback)
+}
+
+export function getMetricsNodeHistory(nodeId: string, windowSecs?: number) {
+  const qs = windowSecs !== undefined ? `?window=${windowSecs}` : ''
+  return fetchJson<NodeMetricSampleResponse[]>(
+    `/metrics/nodes/${encodeURIComponent(nodeId)}/history${qs}`
+  )
+}
+
+// --- OTel spans (M08) ---
+
+export type OtelSpanResponse = {
+  spanId: string
+  parentSpanId: string | null
+  traceId: string
+  nodeId: string
+  operationName: string
+  startMicros: number
+  durationMicros: number
+  attributes: Record<string, string>
+}
+
+export type SpanNodeResponse = {
+  span: OtelSpanResponse
+  children: SpanNodeResponse[]
+}
+
+export type OtelStatusResponse = {
+  endpoint: string
+  connected: boolean
+  spanCount: number
+  lastError: string | null
+}
+
+export function getOtelStatus(fallback: OtelStatusResponse) {
+  return withFallback('/otel/status', fallback)
+}
+
+export function getOtelSpans(node?: string, limit = 200) {
+  const qs = new URLSearchParams()
+  if (node) qs.set('node', node)
+  qs.set('limit', String(limit))
+  return fetchJson<OtelSpanResponse[]>(`/otel/spans?${qs.toString()}`)
+}
+
+export function getOtelTrace(traceId: string) {
+  return fetchJson<SpanNodeResponse[]>(`/otel/trace/${encodeURIComponent(traceId)}`)
+}

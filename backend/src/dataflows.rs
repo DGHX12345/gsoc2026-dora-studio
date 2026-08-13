@@ -315,7 +315,7 @@ fn graph_layout(nodes: &[DataflowDefinitionNode]) -> HashMap<String, (u32, u32)>
     for node in nodes {
         let depth = *depths.get(&node.id).unwrap_or(&0);
         let row = rows_by_depth.entry(depth).or_insert(0);
-        layout.insert(node.id.clone(), (70 + depth * 260, 90 + *row * 140));
+        layout.insert(node.id.clone(), (80 + depth * 400, 80 + *row * 200));
         *row += 1;
     }
 

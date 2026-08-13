@@ -1,4 +1,4 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -361,4 +361,67 @@ pub struct DataflowGraph {
     pub nodes: Vec<GraphNode>,
     pub edges: Vec<GraphEdge>,
     pub diagnostics: Vec<Diagnostic>,
+}
+
+// --- Runtime node status (M03) ---
+
+/// Per-node runtime status for canvas overlay.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NodeRuntimeStatus {
+    pub node_id: String,
+    pub status: String,
+    pub uptime_secs: Option<u64>,
+    pub restart_count: u32,
+    pub cpu_usage: Option<f32>,
+    pub memory_mb: Option<f64>,
+    pub pending_messages: Option<u64>,
+}
+
+/// Request body for hot reload.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReloadRequest {
+    pub node_id: String,
+    pub operator_id: Option<String>,
+}
+
+// --- Recording API types (M04) ---
+
+#[derive(Debug, Deserialize)]
+pub struct OpenRecordingRequest {
+    pub path: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RecordingOpened {
+    pub id: String,
+    pub dataflow_id: String,
+    pub version: u16,
+    pub start_nanos: u64,
+    pub message_count: usize,
+    pub duration_nanos: u64,
+    pub stream_count: usize,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SeekQuery {
+    pub timestamp: u64,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct EntriesQuery {
+    pub node: Option<String>,
+    pub output: Option<String>,
+    #[serde(default)]
+    pub offset: usize,
+    #[serde(default = "default_limit")]
+    pub limit: usize,
+    #[serde(default)]
+    pub include_data: bool,
+}
+
+fn default_limit() -> usize {
+    100
 }

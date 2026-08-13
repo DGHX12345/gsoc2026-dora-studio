@@ -1,10 +1,19 @@
+mod attribution;
 mod coordinator;
+mod coordinator_ws;
+mod daemon;
+mod dataflow_builder;
 mod dataflows;
+mod drec;
 mod external;
+mod metrics;
 mod models;
+mod otel;
+mod protocol;
 mod runtime;
+mod schema_registry;
 
-use std::path::PathBuf;
+use std::{path::PathBuf, sync::Arc};
 
 use axum::{
     extract::{Path, State},
@@ -15,9 +24,53 @@ use axum::{
 };
 use tower_http::{cors::CorsLayer, services::ServeDir};
 
+struct AppState {
+    runtime: runtime::RuntimeHandle,
+    daemon: daemon::DaemonHandle,
+    schemas: schema_registry::SchemaRegistry,
+    ws_client: coordinator_ws::CoordinatorWsClient,
+    recordings: drec::service::RecordingManager,
+    metrics: metrics::MetricsCollector,
+    otel: otel::OtelCollector,
+}
+
 #[tokio::main]
 async fn main() {
-    let runtime = runtime::RuntimeManager::new();
+    let ws_client = coordinator_ws::CoordinatorWsClient::new();
+
+    // Best-effort connect to coordinator WebSocket (non-blocking)
+    let ws_connect_handle = {
+        let ws = ws_client.clone();
+        tokio::spawn(async move {
+            if let Err(e) = ws.connect().await {
+                eprintln!("coordinator WebSocket unavailable (CLI fallback active): {e}");
+            } else {
+                eprintln!("coordinator WebSocket connected");
+            }
+        })
+    };
+
+    let metrics_collector = metrics::MetricsCollector::new(std::time::Duration::from_secs(2));
+    metrics_collector.start();
+
+    // OTel trace backend (Jaeger-compatible API). Default: local Jaeger.
+    let otel_endpoint = std::env::var("DORA_OTEL_QUERY_ENDPOINT")
+        .unwrap_or_else(|_| "http://localhost:16686".to_string());
+    let otel_collector = otel::OtelCollector::new(otel_endpoint);
+    otel_collector.start();
+
+    let state = Arc::new(AppState {
+        runtime: runtime::RuntimeManager::new(),
+        daemon: daemon::DaemonManager::new(),
+        schemas: schema_registry::SchemaRegistry::new(),
+        ws_client,
+        recordings: drec::service::RecordingManager::new(),
+        metrics: metrics_collector,
+        otel: otel_collector,
+    });
+
+    // Wait for WS connect attempt to settle (up to 3s) before starting server
+    let _ = tokio::time::timeout(std::time::Duration::from_secs(3), ws_connect_handle).await;
     let models_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../models");
     let app = Router::new()
         .nest_service("/models", ServeDir::new(models_dir))
@@ -35,7 +88,15 @@ async fn main() {
         .route("/api/runtime/logs", get(runtime_logs))
         .route("/api/runtime/start", post(runtime_start))
         .route("/api/runtime/stop", post(runtime_stop))
+        .route("/api/runtime/nodes/:dataflow_id", get(runtime_nodes))
+        .route(
+            "/api/runtime/nodes/:dataflow_id/reload",
+            post(runtime_reload),
+        )
         .route("/api/coordinator/status", get(coordinator_status))
+        .route("/api/daemon/status", get(daemon_status))
+        .route("/api/daemon/start", post(daemon_start))
+        .route("/api/daemon/stop", post(daemon_stop))
         .route("/api/dviz/status", get(dviz_status))
         .route("/api/dviz/topics", get(dviz_topics))
         .route("/api/dviz/displays", get(dviz_displays))
@@ -43,7 +104,28 @@ async fn main() {
         .route("/api/robot/profile", get(robot_profile))
         .route("/api/moveit/status", get(moveit_status))
         .route("/api/moveit/snapshot", get(moveit_snapshot))
-        .with_state(runtime)
+        .route("/api/dataflow/build", post(dataflow_build))
+        .route("/api/dataflow/validate", post(dataflow_validate))
+        .route("/api/dataflow/parse", post(dataflow_parse))
+        .route("/api/dataflow/run", post(dataflow_run))
+        .route("/api/schema/check", post(schema_check))
+        .route("/api/schema/operator/:name", get(schema_operator))
+        .route("/api/metrics/nodes", get(metrics_nodes))
+        .route("/api/metrics/nodes/:id/history", get(metrics_node_history))
+        .route("/api/otel/status", get(otel_status))
+        .route("/api/otel/spans", get(otel_spans))
+        .route("/api/otel/trace/:trace_id", get(otel_trace))
+        .route("/api/recording/open", post(recording_open))
+        .route("/api/recording/:id/streams", get(recording_streams))
+        .route("/api/recording/:id/seek", get(recording_seek))
+        .route("/api/recording/:id/entries", get(recording_entries))
+        .route("/api/recording/:id/close", post(recording_close))
+        .route("/api/recording/:id/attribution", get(recording_attribution))
+        .route(
+            "/api/recording/:id/attribution/chain",
+            get(recording_attribution_chain),
+        )
+        .with_state(state)
         .layer(CorsLayer::permissive());
 
     let bind_addr =
@@ -170,10 +252,10 @@ async fn moveit_snapshot() -> Json<models::MoveitSnapshotResponse> {
 }
 
 async fn dataflows(
-    State(runtime): State<runtime::RuntimeHandle>,
+    State(state): State<Arc<AppState>>,
 ) -> Result<Json<Vec<models::DataflowSummary>>, ApiError> {
     let mut dataflows = dataflows::list_dataflows().map_err(ApiError::from)?;
-    let rt = runtime.status().await;
+    let rt = state.runtime.status().await;
     let coord = coordinator::query_coordinator().await;
 
     for df in &mut dataflows {
@@ -202,10 +284,10 @@ async fn dataflow_definition(
 
 async fn dataflow_nodes(
     Path(id): Path<String>,
-    State(runtime): State<runtime::RuntimeHandle>,
+    State(state): State<Arc<AppState>>,
 ) -> Result<Json<Vec<models::NodeMetrics>>, ApiError> {
     let mut metrics = dataflows::nodes(&id).map_err(ApiError::from)?;
-    let state = runtime.status().await;
+    let state = state.runtime.status().await;
     if state.status == "running" && state.dataflow_id.as_deref() == Some(&id) {
         for node in &mut metrics {
             node.status = "running".to_string();
@@ -216,11 +298,11 @@ async fn dataflow_nodes(
 
 async fn dataflow_logs(
     Path(id): Path<String>,
-    State(runtime): State<runtime::RuntimeHandle>,
+    State(state): State<Arc<AppState>>,
 ) -> Json<Vec<models::LogEntry>> {
-    let state = runtime.status().await;
-    if state.status == "running" && state.dataflow_id.as_deref() == Some(&id) {
-        Json(runtime.logs().await)
+    let rt = state.runtime.status().await;
+    if rt.status == "running" && rt.dataflow_id.as_deref() == Some(&id) {
+        Json(state.runtime.logs().await)
     } else {
         Json(Vec::new())
     }
@@ -228,10 +310,10 @@ async fn dataflow_logs(
 
 async fn dataflow_graph(
     Path(id): Path<String>,
-    State(runtime): State<runtime::RuntimeHandle>,
+    State(state): State<Arc<AppState>>,
 ) -> Result<Json<models::DataflowGraph>, ApiError> {
     let mut graph = dataflows::graph(&id).map_err(ApiError::from)?;
-    let state = runtime.status().await;
+    let state = state.runtime.status().await;
     if state.status == "running" && state.dataflow_id.as_deref() == Some(&id) {
         for node in &mut graph.nodes {
             node.status = "running".to_string();
@@ -240,35 +322,42 @@ async fn dataflow_graph(
     Ok(Json(graph))
 }
 
-async fn runtime_status(
-    State(runtime): State<runtime::RuntimeHandle>,
-) -> Json<models::RuntimeState> {
-    Json(runtime.status().await)
+async fn runtime_status(State(state): State<Arc<AppState>>) -> Json<models::RuntimeState> {
+    Json(state.runtime.status().await)
 }
 
-async fn runtime_logs(
-    State(runtime): State<runtime::RuntimeHandle>,
-) -> Json<Vec<models::LogEntry>> {
-    Json(runtime.logs().await)
+async fn runtime_logs(State(state): State<Arc<AppState>>) -> Json<Vec<models::LogEntry>> {
+    Json(state.runtime.logs().await)
 }
 
-async fn runtime_start(
-    State(runtime): State<runtime::RuntimeHandle>,
-) -> Json<models::RuntimeState> {
-    Json(runtime.start().await)
+async fn daemon_status(State(state): State<Arc<AppState>>) -> Json<daemon::DaemonStatus> {
+    Json(state.daemon.status().await)
 }
 
-async fn runtime_stop(State(runtime): State<runtime::RuntimeHandle>) -> Json<models::RuntimeState> {
-    Json(runtime.stop().await)
+async fn daemon_start(State(state): State<Arc<AppState>>) -> Json<daemon::DaemonStatus> {
+    Json(state.daemon.start().await)
+}
+
+async fn daemon_stop(State(state): State<Arc<AppState>>) -> Json<daemon::DaemonStatus> {
+    Json(state.daemon.stop().await)
+}
+
+async fn runtime_start(State(state): State<Arc<AppState>>) -> Json<models::RuntimeState> {
+    Json(state.runtime.start().await)
+}
+
+async fn runtime_stop(State(state): State<Arc<AppState>>) -> Json<models::RuntimeState> {
+    Json(state.runtime.stop().await)
 }
 
 async fn dataflow_start(
     Path(id): Path<String>,
-    State(runtime): State<runtime::RuntimeHandle>,
+    State(state): State<Arc<AppState>>,
 ) -> Result<Json<models::RuntimeState>, ApiError> {
     let dataflow = dataflows::resolve_dataflow(&id).map_err(ApiError::from)?;
     Ok(Json(
-        runtime
+        state
+            .runtime
             .start_dataflow(dataflow.id, dataflow.path, dataflow.relative_path)
             .await,
     ))
@@ -276,23 +365,513 @@ async fn dataflow_start(
 
 async fn dataflow_stop(
     Path(id): Path<String>,
-    State(runtime): State<runtime::RuntimeHandle>,
+    State(state): State<Arc<AppState>>,
 ) -> Result<Json<models::RuntimeState>, ApiError> {
     dataflows::resolve_dataflow(&id).map_err(ApiError::from)?;
-    Ok(Json(runtime.stop().await))
+    Ok(Json(state.runtime.stop().await))
 }
 
 async fn dataflow_restart(
     Path(id): Path<String>,
-    State(runtime): State<runtime::RuntimeHandle>,
+    State(state): State<Arc<AppState>>,
 ) -> Result<Json<models::RuntimeState>, ApiError> {
     let dataflow = dataflows::resolve_dataflow(&id).map_err(ApiError::from)?;
-    runtime.stop().await;
+    state.runtime.stop().await;
     Ok(Json(
-        runtime
+        state
+            .runtime
             .start_dataflow(dataflow.id, dataflow.path, dataflow.relative_path)
             .await,
     ))
+}
+
+async fn dataflow_build(
+    Json(graph): Json<dataflow_builder::DataflowGraph>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let mut builder = dataflow_builder::DataflowBuilder::new();
+    for node in graph.nodes {
+        builder.add_node(node).map_err(|e| ApiError {
+            status: StatusCode::UNPROCESSABLE_ENTITY,
+            message: e.to_string(),
+        })?;
+    }
+    for edge in graph.edges {
+        builder.connect(edge).map_err(|e| ApiError {
+            status: StatusCode::UNPROCESSABLE_ENTITY,
+            message: e.to_string(),
+        })?;
+    }
+    let yaml = builder.to_yaml();
+    Ok(Json(serde_json::json!({
+        "yaml": yaml,
+        "node_count": builder.graph().nodes.len(),
+        "edge_count": builder.graph().edges.len(),
+    })))
+}
+
+async fn dataflow_validate(
+    Json(graph): Json<dataflow_builder::DataflowGraph>,
+) -> Json<serde_json::Value> {
+    let mut builder = dataflow_builder::DataflowBuilder::new();
+    let mut errors = Vec::new();
+    for node in graph.nodes {
+        if let Err(e) = builder.add_node(node) {
+            errors.push(e.to_string());
+        }
+    }
+    for edge in graph.edges {
+        if let Err(e) = builder.connect(edge) {
+            errors.push(e.to_string());
+        }
+    }
+    match builder.validate() {
+        Ok(()) if errors.is_empty() => Json(serde_json::json!({ "valid": true, "errors": [] })),
+        Ok(()) => Json(serde_json::json!({ "valid": false, "errors": errors })),
+        Err(mut validation_errors) => {
+            for e in validation_errors {
+                errors.push(e.to_string());
+            }
+            Json(serde_json::json!({ "valid": false, "errors": errors }))
+        }
+    }
+}
+
+async fn dataflow_parse(
+    Json(body): Json<serde_json::Value>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let yaml = body.get("yaml").and_then(|v| v.as_str()).ok_or(ApiError {
+        status: StatusCode::BAD_REQUEST,
+        message: "missing 'yaml' field".to_string(),
+    })?;
+    let builder = dataflow_builder::DataflowBuilder::from_yaml(yaml).map_err(|e| ApiError {
+        status: StatusCode::UNPROCESSABLE_ENTITY,
+        message: e.to_string(),
+    })?;
+    Ok(Json(serde_json::json!({
+        "graph": builder.graph(),
+    })))
+}
+
+async fn dataflow_run(
+    State(state): State<Arc<AppState>>,
+    Json(body): Json<serde_json::Value>,
+) -> Result<Json<models::RuntimeState>, ApiError> {
+    let yaml = body.get("yaml").and_then(|v| v.as_str()).ok_or(ApiError {
+        status: StatusCode::BAD_REQUEST,
+        message: "missing 'yaml' field".to_string(),
+    })?;
+    let name = body
+        .get("name")
+        .and_then(|v| v.as_str())
+        .unwrap_or("studio-dataflow");
+
+    // Stop any existing run first
+    if state.runtime.status().await.status == "running" {
+        state.runtime.stop().await;
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    }
+
+    let rt_state = state.runtime.run_yaml(yaml, name).await;
+    Ok(Json(rt_state))
+}
+
+async fn schema_check(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<schema_registry::CheckRequest>,
+) -> Json<schema_registry::CheckResponse> {
+    Json(state.schemas.check(&req))
+}
+
+async fn schema_operator(
+    State(state): State<Arc<AppState>>,
+    Path(name): Path<String>,
+) -> Result<Json<schema_registry::OperatorSchemas>, ApiError> {
+    state
+        .schemas
+        .operator_schemas(&name)
+        .map(Json)
+        .ok_or(ApiError {
+            status: StatusCode::NOT_FOUND,
+            message: format!("Operator '{}' not found in schema registry", name),
+        })
+}
+
+/// GET /api/runtime/nodes/:dataflow_id — per-node runtime status.
+async fn runtime_nodes(
+    Path(dataflow_id): Path<String>,
+    State(state): State<Arc<AppState>>,
+) -> Json<Vec<models::NodeRuntimeStatus>> {
+    // Try WebSocket first
+    if state.ws_client.is_connected().await {
+        match state.ws_client.node_statuses(&dataflow_id).await {
+            Ok(statuses) => return Json(statuses),
+            Err(e) => eprintln!("WS node_statuses failed: {e}"),
+        }
+    }
+
+    // CLI fallback: query dora list for dataflow-level status
+    let coord = coordinator::query_coordinator().await;
+    let rt = state.runtime.status().await;
+
+    let mut statuses = Vec::new();
+
+    // If we have graph data, use it to produce per-node status
+    if coord.connected {
+        for df in &coord.dataflows {
+            if df.id == dataflow_id || df.name.contains(&dataflow_id) {
+                // We can't get per-node info from CLI, so produce a summary entry
+                let status = if df.status == "running" {
+                    "running".to_string()
+                } else {
+                    "exited".to_string()
+                };
+                // For CLI fallback, create one entry per dataflow (not per-node)
+                statuses.push(models::NodeRuntimeStatus {
+                    node_id: df.id.clone(),
+                    status,
+                    uptime_secs: None,
+                    restart_count: 0,
+                    cpu_usage: None,
+                    memory_mb: None,
+                    pending_messages: None,
+                });
+            }
+        }
+    }
+
+    // If runtime has this dataflow running, include that info
+    if rt.status == "running" && rt.dataflow_id.as_deref() == Some(&dataflow_id) {
+        if statuses.is_empty() {
+            statuses.push(models::NodeRuntimeStatus {
+                node_id: dataflow_id.clone(),
+                status: "running".to_string(),
+                uptime_secs: None,
+                restart_count: 0,
+                cpu_usage: None,
+                memory_mb: None,
+                pending_messages: None,
+            });
+        }
+    }
+
+    if statuses.is_empty() {
+        statuses.push(models::NodeRuntimeStatus {
+            node_id: dataflow_id,
+            status: "unknown".to_string(),
+            uptime_secs: None,
+            restart_count: 0,
+            cpu_usage: None,
+            memory_mb: None,
+            pending_messages: None,
+        });
+    }
+
+    Json(statuses)
+}
+
+/// POST /api/runtime/nodes/:dataflow_id/reload — hot reload a node.
+async fn runtime_reload(
+    Path(dataflow_id): Path<String>,
+    State(state): State<Arc<AppState>>,
+    Json(body): Json<models::ReloadRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    if !state.ws_client.is_connected().await {
+        return Err(ApiError {
+            status: StatusCode::SERVICE_UNAVAILABLE,
+            message: "Coordinator WebSocket not connected. Hot reload requires the WebSocket API."
+                .to_string(),
+        });
+    }
+
+    state
+        .ws_client
+        .reload_node(&dataflow_id, &body.node_id)
+        .await
+        .map_err(|e| ApiError {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            message: e,
+        })?;
+
+    Ok(Json(serde_json::json!({
+        "ok": true,
+        "nodeId": body.node_id,
+        "message": "Reload signal sent. Node will restart with updated code."
+    })))
+}
+
+// --- Recording API (M04) ---
+
+use axum::extract::Query;
+
+async fn recording_open(
+    State(state): State<Arc<AppState>>,
+    Json(body): Json<models::OpenRecordingRequest>,
+) -> Result<Json<models::RecordingOpened>, ApiError> {
+    let path = std::path::PathBuf::from(&body.path);
+    let handle = state.recordings.open(&path).await.map_err(|e| ApiError {
+        status: StatusCode::BAD_REQUEST,
+        message: e,
+    })?;
+
+    Ok(Json(models::RecordingOpened {
+        id: handle.id.to_string(),
+        dataflow_id: handle.header.dataflow_id.to_string(),
+        version: handle.header.version,
+        start_nanos: handle.header.start_nanos,
+        message_count: handle.message_count(),
+        duration_nanos: handle.duration_nanos(),
+        stream_count: handle.streams().len(),
+    }))
+}
+
+async fn recording_streams(
+    Path(id): Path<String>,
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let uid: uuid::Uuid = id.parse().map_err(|_| ApiError {
+        status: StatusCode::BAD_REQUEST,
+        message: format!("invalid recording id: {id}"),
+    })?;
+    let handle = state.recordings.get(&uid).await.ok_or(ApiError {
+        status: StatusCode::NOT_FOUND,
+        message: "recording not found".to_string(),
+    })?;
+
+    let streams: Vec<serde_json::Value> = handle
+        .streams()
+        .iter()
+        .map(|s| {
+            serde_json::json!({
+                "nodeId": s.node_id,
+                "outputId": s.output_id,
+                "entryCount": s.entry_count,
+                "timeRange": [s.time_range.0, s.time_range.1],
+            })
+        })
+        .collect();
+
+    Ok(Json(serde_json::json!({ "streams": streams })))
+}
+
+async fn recording_seek(
+    Path(id): Path<String>,
+    Query(q): Query<models::SeekQuery>,
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let uid: uuid::Uuid = id.parse().map_err(|_| ApiError {
+        status: StatusCode::BAD_REQUEST,
+        message: format!("invalid recording id: {id}"),
+    })?;
+    let handle = state.recordings.get(&uid).await.ok_or(ApiError {
+        status: StatusCode::NOT_FOUND,
+        message: "recording not found".to_string(),
+    })?;
+
+    match handle.seek(q.timestamp) {
+        Some(entry) => Ok(Json(serde_json::json!({
+            "byteOffset": entry.byte_offset,
+            "timestampNanos": entry.timestamp_absolute_nanos,
+            "nodeId": entry.node_id,
+            "outputId": entry.output_id,
+        }))),
+        None => Err(ApiError {
+            status: StatusCode::NOT_FOUND,
+            message: "no entry at or before timestamp".to_string(),
+        }),
+    }
+}
+
+async fn recording_entries(
+    Path(id): Path<String>,
+    Query(q): Query<models::EntriesQuery>,
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let uid: uuid::Uuid = id.parse().map_err(|_| ApiError {
+        status: StatusCode::BAD_REQUEST,
+        message: format!("invalid recording id: {id}"),
+    })?;
+    let handle = state.recordings.get(&uid).await.ok_or(ApiError {
+        status: StatusCode::NOT_FOUND,
+        message: "recording not found".to_string(),
+    })?;
+
+    let entries = if let (Some(node), Some(output)) = (&q.node, &q.output) {
+        handle.stream_entries(node, output, q.offset, q.limit)
+    } else {
+        let all = handle.index.all_entries();
+        let start = q.offset.min(all.len());
+        let end = (start + q.limit).min(all.len());
+        all[start..end].iter().collect()
+    };
+
+    let items: Vec<serde_json::Value> = entries
+        .iter()
+        .map(|e| {
+            let mut obj = serde_json::json!({
+                "byteOffset": e.byte_offset,
+                "timestampNanos": e.timestamp_absolute_nanos,
+                "nodeId": e.node_id,
+                "outputId": e.output_id,
+            });
+            if q.include_data {
+                match handle.read_event_bytes(e.byte_offset) {
+                    Ok(bytes) => {
+                        obj["eventBytes"] = serde_json::json!(bytes);
+                    }
+                    Err(err) => {
+                        eprintln!("read_event_bytes failed at offset {}: {err}", e.byte_offset);
+                    }
+                }
+            }
+            obj
+        })
+        .collect();
+
+    Ok(Json(serde_json::json!({
+        "entries": items,
+        "offset": q.offset,
+        "limit": q.limit,
+        "total": handle.message_count(),
+    })))
+}
+
+async fn recording_close(
+    Path(id): Path<String>,
+    State(state): State<Arc<AppState>>,
+) -> Json<serde_json::Value> {
+    let uid: uuid::Uuid = match id.parse() {
+        Ok(u) => u,
+        Err(_) => return Json(serde_json::json!({ "ok": false, "error": "invalid id" })),
+    };
+    state.recordings.close(&uid).await;
+    Json(serde_json::json!({ "ok": true }))
+}
+
+// --- Attribution API (M09) ---
+
+async fn resolve_recording(
+    state: &AppState,
+    id: &str,
+) -> Result<Arc<drec::service::RecordingHandle>, ApiError> {
+    let uid: uuid::Uuid = id.parse().map_err(|_| ApiError {
+        status: StatusCode::BAD_REQUEST,
+        message: format!("invalid recording id: {id}"),
+    })?;
+    state.recordings.get(&uid).await.ok_or(ApiError {
+        status: StatusCode::NOT_FOUND,
+        message: "recording not found".to_string(),
+    })
+}
+
+async fn extract_attribution(
+    handle: Arc<drec::service::RecordingHandle>,
+) -> Result<attribution::AttributionExtractor, ApiError> {
+    tokio::task::spawn_blocking(move || attribution::AttributionExtractor::from_recording(&handle))
+        .await
+        .map_err(|e| ApiError {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            message: format!("attribution extraction panicked: {e}"),
+        })?
+        .map_err(|e| ApiError {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            message: e,
+        })
+}
+
+async fn recording_attribution(
+    Path(id): Path<String>,
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<attribution::AttributionSummary>, ApiError> {
+    let handle = resolve_recording(&state, &id).await?;
+    let extractor = extract_attribution(handle).await?;
+    Ok(Json(attribution::AttributionSummary::from(&extractor)))
+}
+
+#[derive(serde::Deserialize)]
+struct AttributionChainQuery {
+    timestamp: u64,
+}
+
+async fn recording_attribution_chain(
+    Path(id): Path<String>,
+    Query(q): Query<AttributionChainQuery>,
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<attribution::AttributionChain>, ApiError> {
+    let handle = resolve_recording(&state, &id).await?;
+    let extractor = extract_attribution(handle).await?;
+    extractor
+        .chain_at(q.timestamp)
+        .cloned()
+        .map(Json)
+        .ok_or(ApiError {
+            status: StatusCode::NOT_FOUND,
+            message: format!("no attribution chain at timestamp {}", q.timestamp),
+        })
+}
+
+// --- Metrics API (M07) ---
+
+async fn metrics_nodes(
+    State(state): State<Arc<AppState>>,
+) -> Json<Vec<metrics::NodeMetricSummary>> {
+    Json(state.metrics.nodes_summary().await)
+}
+
+#[derive(serde::Deserialize)]
+struct NodeHistoryQuery {
+    #[serde(default)]
+    window: Option<u64>,
+}
+
+async fn metrics_node_history(
+    State(state): State<Arc<AppState>>,
+    Path(node_id): Path<String>,
+    Query(q): Query<NodeHistoryQuery>,
+) -> Result<Json<Vec<metrics::NodeMetricSample>>, ApiError> {
+    match state.metrics.node_history(&node_id, q.window).await {
+        Some(history) => Ok(Json(history)),
+        None => Err(ApiError {
+            status: StatusCode::NOT_FOUND,
+            message: format!("Node '{}' not found in metrics", node_id),
+        }),
+    }
+}
+
+// --- OTel API (M08) ---
+
+async fn otel_status(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {
+    Json(state.otel.status().await)
+}
+
+#[derive(serde::Deserialize)]
+struct OtelSpansQuery {
+    node: Option<String>,
+    #[serde(default = "default_otel_limit")]
+    limit: usize,
+}
+
+fn default_otel_limit() -> usize {
+    200
+}
+
+async fn otel_spans(
+    State(state): State<Arc<AppState>>,
+    Query(q): Query<OtelSpansQuery>,
+) -> Json<Vec<otel::OtelSpan>> {
+    Json(state.otel.spans_for_node(q.node.as_deref(), q.limit).await)
+}
+
+async fn otel_trace(
+    State(state): State<Arc<AppState>>,
+    Path(trace_id): Path<String>,
+) -> Result<Json<Vec<otel::SpanNode>>, ApiError> {
+    match state.otel.trace_tree(&trace_id).await {
+        Some(tree) => Ok(Json(tree)),
+        None => Err(ApiError {
+            status: StatusCode::NOT_FOUND,
+            message: format!("Trace '{}' not found", trace_id),
+        }),
+    }
 }
 
 async fn shutdown_signal() {
