@@ -340,10 +340,11 @@ impl DrecGenerator {
             version: 1,
             start_nanos: 1_000_000_000,
             dataflow_id: uuid::Uuid::new_v4(),
-            descriptor_yaml: b"nodes: [planner, tf_broadcaster, robot_state, camera]".to_vec(),
+            descriptor_yaml: b"nodes: [planner, tf_broadcaster, robot_state, camera, costmap_node]"
+                .to_vec(),
         };
 
-        let mut entries = Vec::with_capacity(frame_count * 5);
+        let mut entries = Vec::with_capacity(frame_count * 7);
         for i in 0..frame_count {
             let ts = (i as u64) * interval_nanos;
 
@@ -365,6 +366,47 @@ impl DrecGenerator {
                 event_bytes: serde_json::to_vec(&serde_json::json!({ "waypoints": waypoints }))
                     .unwrap(),
             });
+
+            // Flat [tx, ty] target point moving along the figure-8 waypoint path
+            let target = waypoints[(i * 3) % WAYPOINT_COUNT];
+            entries.push(RecordEntry {
+                node_id: "planner".to_string(),
+                output_id: "target_point".to_string(),
+                timestamp_offset_nanos: ts + interval_nanos / 10,
+                event_bytes: serde_json::to_vec(&target).unwrap(),
+            });
+
+            // Synthetic ESDF costmap (single JSON object, plan Revision R3
+            // format) with three Gaussian obstacles, emitted every 10th frame
+            if i % 10 == 0 {
+                const COSTMAP_WIDTH: usize = 24;
+                const COSTMAP_HEIGHT: usize = 24;
+                const OBSTACLES: [(f64, f64, f64); 3] =
+                    [(12.0, 6.0, 2.0), (8.0, 14.0, 1.5), (18.0, 10.0, 2.5)];
+                let mut values = Vec::with_capacity(COSTMAP_WIDTH * COSTMAP_HEIGHT);
+                for row in 0..COSTMAP_HEIGHT {
+                    for col in 0..COSTMAP_WIDTH {
+                        let mut v = 0.0;
+                        for (crow, ccol, sigma) in OBSTACLES {
+                            let d2 = (row as f64 - crow).powi(2) + (col as f64 - ccol).powi(2);
+                            v += (-d2 / (2.0 * sigma * sigma)).exp();
+                        }
+                        values.push((v.clamp(0.0, 1.0) * 1000.0).round() / 1000.0);
+                    }
+                }
+                let costmap = serde_json::json!({
+                    "width": COSTMAP_WIDTH,
+                    "height": COSTMAP_HEIGHT,
+                    "resolution": 0.1,
+                    "values": values,
+                });
+                entries.push(RecordEntry {
+                    node_id: "costmap_node".to_string(),
+                    output_id: "costmap".to_string(),
+                    timestamp_offset_nanos: ts + interval_nanos / 10,
+                    event_bytes: serde_json::to_vec(&costmap).unwrap(),
+                });
+            }
 
             // Flat stride-3 trajectory (x, y, z) — the dviz wire format
             let trajectory: Vec<f64> = vec![
@@ -522,6 +564,81 @@ mod tests {
         let transforms = tf["transforms"].as_array().unwrap();
         assert_eq!(transforms[0]["parent"].as_str().unwrap(), "map");
         assert_eq!(transforms[0]["rotation"].as_array().unwrap().len(), 4);
+    }
+
+    #[test]
+    fn generate_tool_demo_produces_target_and_costmap_streams() {
+        let (_header, entries) = DrecGenerator::generate_tool_demo(5, 100_000_000);
+
+        let streams: std::collections::HashSet<(String, String)> = entries
+            .iter()
+            .map(|e| (e.node_id.clone(), e.output_id.clone()))
+            .collect();
+        assert!(streams.contains(&("planner".to_string(), "target_point".to_string())));
+        assert!(streams.contains(&("costmap_node".to_string(), "costmap".to_string())));
+
+        // target_point parses as a flat JSON array [tx, ty] of f64
+        let target: serde_json::Value = serde_json::from_slice(
+            &entries
+                .iter()
+                .find(|e| e.node_id == "planner" && e.output_id == "target_point")
+                .unwrap()
+                .event_bytes,
+        )
+        .unwrap();
+        let pair = target.as_array().unwrap();
+        assert_eq!(pair.len(), 2);
+        assert!(pair[0].as_f64().is_some());
+        assert!(pair[1].as_f64().is_some());
+
+        // costmap parses as a single object in the R3 format
+        let costmap: serde_json::Value = serde_json::from_slice(
+            &entries
+                .iter()
+                .find(|e| e.node_id == "costmap_node" && e.output_id == "costmap")
+                .unwrap()
+                .event_bytes,
+        )
+        .unwrap();
+        assert_eq!(costmap["width"].as_u64(), Some(24));
+        assert_eq!(costmap["height"].as_u64(), Some(24));
+        assert_eq!(costmap["resolution"].as_f64(), Some(0.1));
+        let values = costmap["values"].as_array().unwrap();
+        assert_eq!(values.len(), 576);
+        for v in values {
+            assert!(v.as_f64().unwrap().is_finite());
+        }
+
+        // 5 frames → costmap only on frame 0 (i % 10 == 0)
+        let costmap_count = entries
+            .iter()
+            .filter(|e| e.node_id == "costmap_node" && e.output_id == "costmap")
+            .count();
+        assert_eq!(costmap_count, 1);
+
+        // 120 frames → 12 costmap entries
+        let (_header120, entries120) = DrecGenerator::generate_tool_demo(120, 100_000_000);
+        let costmap_count120 = entries120
+            .iter()
+            .filter(|e| e.node_id == "costmap_node" && e.output_id == "costmap")
+            .count();
+        assert_eq!(costmap_count120, 12);
+
+        // Determinism: byte-identical costmap event_bytes across runs
+        let (_header_b, entries_b) = DrecGenerator::generate_tool_demo(5, 100_000_000);
+        let a = entries
+            .iter()
+            .find(|e| e.node_id == "costmap_node" && e.output_id == "costmap")
+            .unwrap()
+            .event_bytes
+            .clone();
+        let b = entries_b
+            .iter()
+            .find(|e| e.node_id == "costmap_node" && e.output_id == "costmap")
+            .unwrap()
+            .event_bytes
+            .clone();
+        assert_eq!(a, b);
     }
 
     #[test]
