@@ -364,4 +364,28 @@ mod tests {
         let chains = chains_from_frames(&frames, &BTreeMap::new());
         assert!(matches!(&chains[0].steps[1], AttributionStep::Prompt { text, .. } if text == "Task 7"));
     }
+
+    #[tokio::test]
+    async fn real_b601_dataset_end_to_end() {
+        let path = std::path::PathBuf::from(
+            "/home/dora/.cache/huggingface/lerobot/my_org/b601_pilot_v1",
+        );
+        if !path.exists() {
+            eprintln!("B601 dataset not found — skipping real-data test");
+            return;
+        }
+        let info = scan_dataset(&path).await.expect("scan real dataset");
+        assert_eq!(info.episodes.len(), 5);
+        assert_eq!(info.layout, "v1");
+        assert!(info.tasks.values().any(|t| t.contains("red cube")));
+        let (frames, total) = read_frames(&path, 0, 0, 50).await.expect("frames");
+        assert_eq!(total, 897);
+        assert_eq!(frames.len(), 50);
+        assert_eq!(frames[0].action.len(), 7);
+        let chains = chains_from_frames(&frames, &info.tasks);
+        assert_eq!(chains.len(), 50);
+        assert!(matches!(&chains[0].steps[1], crate::attribution::AttributionStep::Prompt { text, .. }
+            if text.contains("Pick up the red cube")));
+        assert_eq!(chains[0].success(), None);
+    }
 }
