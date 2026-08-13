@@ -9,6 +9,7 @@ mod external;
 mod metrics;
 mod models;
 mod otel;
+mod profile;
 mod protocol;
 mod runtime;
 mod schema_registry;
