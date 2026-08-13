@@ -8,6 +8,7 @@ mod drec;
 mod external;
 mod lerobot;
 mod metrics;
+mod monitoring;
 mod models;
 mod otel;
 mod profile;
@@ -32,8 +33,7 @@ struct AppState {
     schemas: schema_registry::SchemaRegistry,
     ws_client: coordinator_ws::CoordinatorWsClient,
     recordings: drec::service::RecordingManager,
-    metrics: metrics::MetricsCollector,
-    otel: otel::OtelCollector,
+    monitoring: monitoring::MonitoringController,
     profiles: profile::ProfileManager,
 }
 
@@ -53,14 +53,19 @@ async fn main() {
         })
     };
 
-    let metrics_collector = metrics::MetricsCollector::new(std::time::Duration::from_secs(2));
-    metrics_collector.start();
+    // Monitoring collectors start STOPPED (M11.5 D1): diagnostics are opt-in,
+    // enabled through /api/monitoring/toggle. No polling at boot.
+    // D2: node metrics poll the coordinator WebSocket first, falling back to
+    // `dora node list` per attempt when the WS is unavailable.
+    let metrics_collector = metrics::MetricsCollector::new_with_ws(
+        std::time::Duration::from_secs(2),
+        ws_client.clone(),
+    );
 
     // OTel trace backend (Jaeger-compatible API). Default: local Jaeger.
     let otel_endpoint = std::env::var("DORA_OTEL_QUERY_ENDPOINT")
         .unwrap_or_else(|_| "http://localhost:16686".to_string());
     let otel_collector = otel::OtelCollector::new(otel_endpoint);
-    otel_collector.start();
 
     let state = Arc::new(AppState {
         runtime: runtime::RuntimeManager::new(),
@@ -68,8 +73,7 @@ async fn main() {
         schemas: schema_registry::SchemaRegistry::new(),
         ws_client,
         recordings: drec::service::RecordingManager::new(),
-        metrics: metrics_collector,
-        otel: otel_collector,
+        monitoring: monitoring::MonitoringController::new(metrics_collector, otel_collector),
         profiles: profile::ProfileManager::new(
             &PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../profiles"),
         ),
@@ -121,6 +125,8 @@ async fn main() {
         .route("/api/otel/status", get(otel_status))
         .route("/api/otel/spans", get(otel_spans))
         .route("/api/otel/trace/:trace_id", get(otel_trace))
+        .route("/api/monitoring/status", get(monitoring_status))
+        .route("/api/monitoring/toggle", post(monitoring_toggle))
         .route("/api/recording/open", post(recording_open))
         .route("/api/recording/:id/streams", get(recording_streams))
         .route("/api/recording/:id/seek", get(recording_seek))
@@ -979,7 +985,7 @@ async fn lerobot_attribution(
 async fn metrics_nodes(
     State(state): State<Arc<AppState>>,
 ) -> Json<Vec<metrics::NodeMetricSummary>> {
-    Json(state.metrics.nodes_summary().await)
+    Json(state.monitoring.metrics.nodes_summary().await)
 }
 
 #[derive(serde::Deserialize)]
@@ -993,7 +999,7 @@ async fn metrics_node_history(
     Path(node_id): Path<String>,
     Query(q): Query<NodeHistoryQuery>,
 ) -> Result<Json<Vec<metrics::NodeMetricSample>>, ApiError> {
-    match state.metrics.node_history(&node_id, q.window).await {
+    match state.monitoring.metrics.node_history(&node_id, q.window).await {
         Some(history) => Ok(Json(history)),
         None => Err(ApiError {
             status: StatusCode::NOT_FOUND,
@@ -1005,7 +1011,7 @@ async fn metrics_node_history(
 // --- OTel API (M08) ---
 
 async fn otel_status(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {
-    Json(state.otel.status().await)
+    Json(state.monitoring.otel.status().await)
 }
 
 #[derive(serde::Deserialize)]
@@ -1023,20 +1029,43 @@ async fn otel_spans(
     State(state): State<Arc<AppState>>,
     Query(q): Query<OtelSpansQuery>,
 ) -> Json<Vec<otel::OtelSpan>> {
-    Json(state.otel.spans_for_node(q.node.as_deref(), q.limit).await)
+    Json(state.monitoring.otel.spans_for_node(q.node.as_deref(), q.limit).await)
 }
 
 async fn otel_trace(
     State(state): State<Arc<AppState>>,
     Path(trace_id): Path<String>,
 ) -> Result<Json<Vec<otel::SpanNode>>, ApiError> {
-    match state.otel.trace_tree(&trace_id).await {
+    match state.monitoring.otel.trace_tree(&trace_id).await {
         Some(tree) => Ok(Json(tree)),
         None => Err(ApiError {
             status: StatusCode::NOT_FOUND,
             message: format!("Trace '{}' not found", trace_id),
         }),
     }
+}
+
+// --- Monitoring control API (M11.5) ---
+
+async fn monitoring_status(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {
+    Json(state.monitoring.status().await)
+}
+
+async fn monitoring_toggle(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<models::MonitoringToggleRequest>,
+) -> Json<serde_json::Value> {
+    if let Some(enabled) = req.node_metrics {
+        state
+            .monitoring
+            .set_enabled(monitoring::MonitorTarget::NodeMetrics, enabled);
+    }
+    if let Some(enabled) = req.otel_spans {
+        state
+            .monitoring
+            .set_enabled(monitoring::MonitorTarget::OtelSpans, enabled);
+    }
+    Json(state.monitoring.status().await)
 }
 
 async fn shutdown_signal() {

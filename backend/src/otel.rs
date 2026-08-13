@@ -5,6 +5,10 @@
 //! REST API to fetch spans and build per-node flame graphs.
 
 use std::collections::HashMap;
+use std::future::Future;
+use std::sync::Arc;
+
+use tokio::sync::{watch, RwLock};
 
 // ---------------------------------------------------------------------------
 // Types
@@ -195,64 +199,73 @@ fn build_node(by_id: &HashMap<String, OtelSpan>, span: &OtelSpan) -> SpanNode {
 // ---------------------------------------------------------------------------
 
 /// Polls a Jaeger-compatible HTTP API for spans, keeps a ring buffer.
+///
+/// Starts stopped (M11.5 D1): monitoring is opt-in, so nothing polls until
+/// `start()` is called.
 #[derive(Clone)]
 pub struct OtelCollector {
-    inner: std::sync::Arc<tokio::sync::RwLock<OtelInner>>,
+    inner: Arc<RwLock<OtelInner>>,
+    running: watch::Sender<bool>,
 }
 
 struct OtelInner {
     endpoint: String,
+    poll_interval: std::time::Duration,
     spans: Vec<OtelSpan>,
     capacity: usize,
     connected: bool,
     last_error: Option<String>,
+    sample_count: u64,
+    last_poll_at: Option<u64>,
 }
 
 impl OtelCollector {
     pub fn new(endpoint: String) -> Self {
         Self {
-            inner: std::sync::Arc::new(tokio::sync::RwLock::new(OtelInner {
+            inner: Arc::new(RwLock::new(OtelInner {
                 endpoint,
+                poll_interval: std::time::Duration::from_secs(5),
                 spans: Vec::new(),
                 capacity: 1000,
                 connected: false,
                 last_error: None,
+                sample_count: 0,
+                last_poll_at: None,
             })),
+            running: watch::channel(false).0,
         }
     }
 
-    /// Spawns a background task that polls the Jaeger API for spans.
+    /// Spawns the background poll task unless it is already running.
     ///
     /// Jaeger's `/api/traces` requires a `service` parameter, so the poll
     /// first lists services (`/api/services`), then fetches recent traces
     /// per service and merges the results.
     pub fn start(&self) {
-        let inner = std::sync::Arc::clone(&self.inner);
+        if *self.running.borrow() {
+            return;
+        }
+        let rx = self.running.subscribe();
+        self.running.send_replace(true);
+
+        let inner = Arc::clone(&self.inner);
         tokio::spawn(async move {
-            let mut interval = tokio::time::interval(std::time::Duration::from_secs(5));
-            loop {
-                interval.tick().await;
-                let endpoint = inner.read().await.endpoint.clone();
-                match fetch_all_traces(&endpoint).await {
-                    Ok(spans) => {
-                        let mut guard = inner.write().await;
-                        guard.connected = true;
-                        guard.last_error = None;
-                        for span in spans {
-                            if guard.spans.len() >= guard.capacity {
-                                guard.spans.remove(0);
-                            }
-                            guard.spans.push(span);
-                        }
-                    }
-                    Err(e) => {
-                        let mut guard = inner.write().await;
-                        guard.connected = false;
-                        guard.last_error = Some(e);
-                    }
-                }
-            }
+            let endpoint = inner.read().await.endpoint.clone();
+            otel_poll_loop(inner, rx, move || {
+                let endpoint = endpoint.clone();
+                async move { fetch_all_traces(&endpoint).await }
+            })
+            .await;
         });
+    }
+
+    /// Signals the poll task to exit; the task stops at the next tick.
+    pub fn stop(&self) {
+        self.running.send_replace(false);
+    }
+
+    pub fn is_running(&self) -> bool {
+        *self.running.borrow()
     }
 
     /// Returns cached spans (newest first), optionally filtered by node and limited.
@@ -283,15 +296,64 @@ impl OtelCollector {
         build_span_trees(&spans).remove(trace_id)
     }
 
-    /// Status: endpoint, connected flag, last error.
+    /// Status: running flag, poll stats, endpoint, connected flag, last error.
     pub async fn status(&self) -> serde_json::Value {
         let inner = self.inner.read().await;
         serde_json::json!({
+            "enabled": *self.running.borrow(),
+            "sampleCount": inner.sample_count,
+            "lastPollAt": inner.last_poll_at,
             "endpoint": inner.endpoint,
             "connected": inner.connected,
             "spanCount": inner.spans.len(),
             "lastError": inner.last_error,
         })
+    }
+}
+
+/// Polls `fetch` on the configured interval until the watch channel flips to
+/// `false` (or the sender is dropped). Errors are recorded, not fatal.
+async fn otel_poll_loop<F, Fut>(
+    inner: Arc<RwLock<OtelInner>>,
+    mut rx: watch::Receiver<bool>,
+    mut fetch: F,
+) where
+    F: FnMut() -> Fut,
+    Fut: Future<Output = Result<Vec<OtelSpan>, String>>,
+{
+    let poll_interval = inner.read().await.poll_interval;
+    let mut interval = tokio::time::interval(poll_interval);
+
+    loop {
+        tokio::select! {
+            _ = interval.tick() => {
+                let result = fetch().await;
+                let mut guard = inner.write().await;
+                guard.sample_count += 1;
+                guard.last_poll_at = Some(crate::metrics::unix_timestamp());
+                match result {
+                    Ok(spans) => {
+                        guard.connected = true;
+                        guard.last_error = None;
+                        for span in spans {
+                            if guard.spans.len() >= guard.capacity {
+                                guard.spans.remove(0);
+                            }
+                            guard.spans.push(span);
+                        }
+                    }
+                    Err(e) => {
+                        guard.connected = false;
+                        guard.last_error = Some(e);
+                    }
+                }
+            }
+            changed = rx.changed() => {
+                if changed.is_err() || !*rx.borrow() {
+                    break;
+                }
+            }
+        }
     }
 }
 
@@ -713,5 +775,89 @@ mod tests {
         assert_eq!(recent[0].span_id, "s9");
         assert_eq!(recent[1].span_id, "s8");
         assert_eq!(recent[2].span_id, "s7");
+    }
+
+    // -- Poll loop lifecycle (M11.5) --
+
+    fn stub_span(id: &str) -> OtelSpan {
+        OtelSpan {
+            span_id: id.to_string(),
+            parent_span_id: None,
+            trace_id: "t1".into(),
+            node_id: "n1".into(),
+            operation_name: "op".into(),
+            start_micros: 0,
+            duration_micros: 1,
+            attributes: HashMap::new(),
+        }
+    }
+
+    #[tokio::test]
+    async fn otel_poll_loop_counts_attempts_and_applies_spans() {
+        let collector = OtelCollector::new("http://stub".into());
+        collector.inner.write().await.poll_interval = std::time::Duration::from_millis(5);
+        let inner = Arc::clone(&collector.inner);
+        let (tx, rx) = tokio::sync::watch::channel(true);
+
+        let task = tokio::spawn(otel_poll_loop(inner, rx, || async {
+            Ok(vec![stub_span("s1")])
+        }));
+
+        tokio::time::sleep(std::time::Duration::from_millis(40)).await;
+        tx.send(false).unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(1), task)
+            .await
+            .unwrap()
+            .unwrap();
+
+        let guard = collector.inner.read().await;
+        assert!(guard.sample_count >= 2);
+        assert!(guard.last_poll_at.is_some());
+        assert_eq!(guard.spans.len(), guard.sample_count as usize);
+        assert!(guard.spans.iter().all(|s| s.span_id == "s1"));
+        assert!(guard.connected);
+    }
+
+    #[tokio::test]
+    async fn otel_poll_loop_errors_do_not_stop_the_loop() {
+        let collector = OtelCollector::new("http://stub".into());
+        collector.inner.write().await.poll_interval = std::time::Duration::from_millis(5);
+        let inner = Arc::clone(&collector.inner);
+        let (tx, rx) = tokio::sync::watch::channel(true);
+
+        let task = tokio::spawn(otel_poll_loop(inner, rx, || async {
+            Err("backend down".to_string())
+        }));
+
+        tokio::time::sleep(std::time::Duration::from_millis(40)).await;
+        tx.send(false).unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(1), task)
+            .await
+            .unwrap()
+            .unwrap();
+
+        let guard = collector.inner.read().await;
+        assert!(guard.sample_count >= 2);
+        assert!(!guard.connected);
+        assert_eq!(guard.last_error.as_deref(), Some("backend down"));
+    }
+
+    #[tokio::test]
+    async fn otel_collector_start_stop_toggles_running() {
+        let collector = OtelCollector::new("http://localhost:1".into());
+        assert!(!collector.is_running());
+
+        collector.start();
+        assert!(collector.is_running());
+        collector.start(); // must not spawn a second loop
+
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        collector.stop();
+        assert!(!collector.is_running());
+
+        let status = collector.status().await;
+        assert_eq!(status["enabled"], false);
+        assert!(status["sampleCount"].as_u64().unwrap() >= 1);
+        assert!(status["lastPollAt"].is_u64());
     }
 }

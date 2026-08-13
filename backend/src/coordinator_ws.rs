@@ -18,7 +18,7 @@ use uuid::Uuid;
 
 use crate::{
     models::NodeRuntimeStatus,
-    protocol::types::{NodeInfoList, NodeStatus},
+    protocol::types::{NodeInfo, NodeInfoList, NodeStatus},
 };
 
 // ---------------------------------------------------------------------------
@@ -203,14 +203,9 @@ impl CoordinatorWsClient {
             .parse()
             .map_err(|_| format!("invalid dataflow id: {dataflow_id}"))?;
 
-        let params = serde_json::json!({});
-        let result = self.request("GetNodeInfo", params).await?;
-
-        let nodes: NodeInfoList = serde_json::from_value(result)
-            .map_err(|e| format!("failed to parse GetNodeInfo reply: {e}"))?;
+        let nodes = self.all_node_infos().await?;
 
         Ok(nodes
-            .0
             .into_iter()
             .map(|info| NodeRuntimeStatus {
                 node_id: info.node_id,
@@ -222,6 +217,16 @@ impl CoordinatorWsClient {
                 pending_messages: info.metrics.as_ref().map(|m| m.pending_messages),
             })
             .collect())
+    }
+
+    /// Fetch full node info for ALL running nodes (GetNodeInfo takes no
+    /// parameters and returns every node across all dataflows).
+    pub async fn all_node_infos(&self) -> Result<Vec<NodeInfo>, String> {
+        let result = self.request("GetNodeInfo", serde_json::json!({})).await?;
+
+        let nodes: NodeInfoList = serde_json::from_value(result)
+            .map_err(|e| format!("failed to parse GetNodeInfo reply: {e}"))?;
+        Ok(nodes.0)
     }
 
     /// Send a reload request for a specific node.
@@ -498,7 +503,7 @@ fn read_token_file(path: &std::path::Path) -> Option<String> {
 // Helpers
 // ---------------------------------------------------------------------------
 
-fn status_to_string(status: Option<&NodeStatus>) -> String {
+pub(crate) fn status_to_string(status: Option<&NodeStatus>) -> String {
     match status {
         Some(NodeStatus::Running) => "running",
         Some(NodeStatus::Restarting) => "reloading",
@@ -533,6 +538,12 @@ fn check_hello_reply(text: &str) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn all_node_infos_errors_when_not_connected() {
+        let client = CoordinatorWsClient::new();
+        assert!(client.all_node_infos().await.is_err());
+    }
 
     #[test]
     fn status_to_string_maps_all_variants() {

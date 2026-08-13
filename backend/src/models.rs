@@ -386,6 +386,18 @@ pub struct ReloadRequest {
     pub operator_id: Option<String>,
 }
 
+// --- Monitoring control (M11.5) ---
+
+/// Partial toggle: absent fields leave the target unchanged.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MonitoringToggleRequest {
+    #[serde(default)]
+    pub node_metrics: Option<bool>,
+    #[serde(default)]
+    pub otel_spans: Option<bool>,
+}
+
 // --- Recording API types (M04) ---
 
 #[derive(Debug, Deserialize)]
