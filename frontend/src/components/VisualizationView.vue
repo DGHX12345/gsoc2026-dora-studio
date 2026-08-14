@@ -140,6 +140,7 @@
           v-if="viewportMode === 'replay'"
           :recording-id="replayRecordingId"
           :current-timestamp="replayCurrentTime"
+          :preview-on-profile-model="attributionPreviewOnProfileModel"
           @seek-timestamp="(ts: number) => replayEngine?.seek(ts, true)"
           @apply-action="applyActionVector"
         />
@@ -185,6 +186,7 @@ import { createNanoRobotBasePose } from '../lib/nanoRobotMotion'
 import { findRecommendations, mergeRecommendations } from '../tools/matching'
 import { toolRegistry } from '../tools/registry'
 import { registerBuiltinTools } from '../tools/index'
+import { MoveItTool } from '../tools/moveit/MoveItTool'
 import NanoRobotViewer from './NanoRobotViewer.vue'
 import AttributionBar from './AttributionBar.vue'
 import ToolPanel, { type ToolRecommendation } from './ToolPanel.vue'
@@ -475,7 +477,22 @@ async function startReplay() {
 // M10: apply a LeRobot action vector to the replay-mode viewport (first 6
 // joints). Stays in replay mode so the attribution panel remains mounted;
 // without an active .drec, replayJoints are the display pose.
-function applyActionVector(vector: number[]) {
+// M13 D4.1: when the MoveIt tool has the matching robot loaded (B601), the
+// preview drives that model instead of the Nano fallback.
+function applyActionVector(vector: number[], profileRobot: string | null) {
+  const moveitTool = toolRegistry.get('moveit-bridge') as MoveItTool | undefined
+  const snapshot = moveitTool?.getSnapshot()
+  const modelMatches =
+    profileRobot !== null &&
+    snapshot?.robotState === 'loaded' &&
+    snapshot.robotId !== null &&
+    profileRobot.toLowerCase() === snapshot.robotId.toLowerCase()
+  if (moveitTool && modelMatches) {
+    moveitTool.previewPose(vector)
+    attributionPreviewOnProfileModel.value = true
+    return
+  }
+  attributionPreviewOnProfileModel.value = false
   const names: (keyof RobotJointState)[] = ['joint_1', 'joint_2', 'joint_3', 'joint_4', 'joint_5', 'joint_6']
   names.forEach((name, i) => {
     if (vector[i] !== undefined) replayJoints[name] = vector[i]
@@ -504,6 +521,9 @@ function stopReplay() {
 // --- M11: tool slot panel ---
 const nanoViewer = ref<InstanceType<typeof NanoRobotViewer> | null>(null)
 const toolsPanelOpen = ref(false)
+// M13 D4.1: true while the attribution preview drives the profile's own
+// robot model (B601) instead of the Nano fallback.
+const attributionPreviewOnProfileModel = ref(false)
 const toolRecommendations = ref<ToolRecommendation[]>([])
 // Monotonic token for async tool-recommendation requests: a newer dataflow
 // scan or replay action invalidates an in-flight dataflow scan.

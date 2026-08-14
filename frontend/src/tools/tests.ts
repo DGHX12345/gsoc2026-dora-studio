@@ -11,3 +11,7 @@ import './dviz/parse.test';
 import './moveit/parse.test';
 import './moveit/joint-config.test';
 import './moveit/MoveItTool.test';
+import './moveit/urdf/xml.test';
+import './moveit/urdf/urdf.test';
+import './moveit/urdf/robot.test';
+import './moveit/urdf/meshes.test';

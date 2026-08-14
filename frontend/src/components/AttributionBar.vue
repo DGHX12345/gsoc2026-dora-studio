@@ -18,11 +18,14 @@ import { useI18n } from '../i18n'
 const props = defineProps<{
   recordingId: string
   currentTimestamp: number
+  /** M13 D4.1: true while the parent drives the profile's own robot model
+   * (B601) for the "Show in 3D" preview — the Nano-fallback note hides. */
+  previewOnProfileModel?: boolean
 }>()
 
 const emit = defineEmits<{
   'seek-timestamp': [timestampNs: number]
-  'apply-action': [vector: number[]]
+  'apply-action': [vector: number[], profileRobot: string | null]
 }>()
 
 const { t } = useI18n()
@@ -211,7 +214,10 @@ function onShowIn3d() {
       const vector = lerobotAngleUnit.value === 'degrees'
         ? action.vector.map((v) => v * degToRad)
         : action.vector
-      emit('apply-action', vector)
+      // M13 D4.1: the parent switches the preview to the profile's own
+      // robot model (B601) when the MoveIt tool has it loaded.
+      const profileRobot = profiles.value.find((p) => p.name === selectedProfile.value)?.robot ?? null
+      emit('apply-action', vector, profileRobot)
     }
   } else {
     emit('seek-timestamp', selectedTs.value)
@@ -417,7 +423,7 @@ const currentSourceHint = computed(() => (
           <div v-if="detailLoading" class="attr-detail-body">…</div>
           <div v-else-if="detailError" class="attr-detail-body error">{{ t.attribution.noDetail }}: {{ detailError }}</div>
           <div v-else-if="detail" class="attr-detail-body">
-            <span v-if="source === 'lerobot'" class="attr-note">{{ t.attribution.nanoPreviewNote }}</span>
+            <span v-if="source === 'lerobot' && !props.previewOnProfileModel" class="attr-note">{{ t.attribution.nanoPreviewNote }}</span>
             <!-- Step: SensorFrame -->
             <div class="attr-step">
               <span class="attr-step-num">1</span>
