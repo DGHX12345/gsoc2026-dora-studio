@@ -153,6 +153,9 @@ export class MoveItTool implements ViewportTool {
   private attachEpoch = 0;
 
   private trajectory: { nodeId: string; waypoints: number[][]; lastBatchTs: number } | null = null;
+  /** Content signature of the rendered trajectory — identical re-publishes
+   * skip the FK rebuild (see handleTrajectory). */
+  private trajectorySignature: string | null = null;
   private planStatus: { status: PlanStatus; lastBatchTs: number } | null = null;
   private execution: { status: ExecutionStatus; lastBatchTs: number } | null = null;
   private jointCommands: { values: number[]; lastBatchTs: number } | null = null;
@@ -253,6 +256,7 @@ export class MoveItTool implements ViewportTool {
     this.disposeRobot();
 
     this.trajectory = null;
+    this.trajectorySignature = null;
     this.planStatus = null;
     this.execution = null;
     this.jointCommands = null;
@@ -441,8 +445,14 @@ export class MoveItTool implements ViewportTool {
     if (waypoints === null) return; // invalid/unsupported: keep last known plan
     this.trajectory = { nodeId: batch.nodeId, waypoints, lastBatchTs: batch.timestampNs };
     this.numJoints = waypoints[0]?.length ?? this.numJoints;
+    const signature = waypoints.map((row) => row.join(',')).join(';');
     if (this.robotState === 'loaded') {
-      this.renderFkArtifacts();
+      // The demo re-publishes the same plan every frame — rebuilding ghost
+      // clones and the EE path per frame would churn the scene for nothing.
+      if (signature !== this.trajectorySignature) {
+        this.trajectorySignature = signature;
+        this.renderFkArtifacts();
+      }
     } else {
       this.renderChart(waypoints);
     }
@@ -516,7 +526,9 @@ export class MoveItTool implements ViewportTool {
   private clearGhosts() {
     if (!this.ghostsGroup) return;
     for (const child of [...this.ghostsGroup.children]) {
-      disposeObject(child);
+      // Materials only: ghosts SHARE the model's BufferGeometry, and
+      // disposing it would force a GPU re-upload of the whole model.
+      disposeMaterialsOnly(child);
       this.ghostsGroup.remove(child);
     }
   }
@@ -644,6 +656,16 @@ function disposeObject(root: import('three').Object3D) {
   root.traverse((obj) => {
     const mesh = obj as { geometry?: { dispose?: () => void }; material?: Material | Material[] };
     mesh.geometry?.dispose?.();
+    if (mesh.material) {
+      const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+      for (const material of materials) material.dispose();
+    }
+  });
+}
+
+function disposeMaterialsOnly(root: import('three').Object3D) {
+  root.traverse((obj) => {
+    const mesh = obj as { material?: Material | Material[] };
     if (mesh.material) {
       const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
       for (const material of materials) material.dispose();

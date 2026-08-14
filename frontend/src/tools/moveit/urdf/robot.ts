@@ -129,6 +129,9 @@ export function buildRobotModel(urdf: UrdfRobot): RobotModel {
       return model.getLinkWorldPosition(endEffectorLink);
     },
     clonePose(opacity) {
+      // Object3D.clone shares material REFERENCES (geometries too), so the
+      // ghost needs its own cloned materials — otherwise making the ghost
+      // transparent would turn the live model transparent as well.
       const clone = root.clone(true);
       clone.traverse((obj) => {
         const mesh = obj as { material?: Material | Material[] };

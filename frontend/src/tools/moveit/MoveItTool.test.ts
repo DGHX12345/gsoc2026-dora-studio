@@ -318,6 +318,60 @@ const tests: TestCase[] = [
     },
   },
   {
+    name: 'ghost rebuilds do not dispose the shared model geometry',
+    run: async () => {
+      // Ghosts share the model's BufferGeometry (only materials are
+      // cloned). Disposing a ghost must never dispose the shared geometry —
+      // that would force a GPU re-upload of the whole model every frame.
+      const { loadUrdfRobot } = await import('./urdf/meshes');
+      const urdf = '<robot name="m"><link name="a"><visual><geometry><box size="0.1 0.1 0.1"/></geometry></visual></link></robot>';
+      const model = await loadUrdfRobot(urdf, async () => {
+        throw new Error('no meshes');
+      });
+      let geometryDisposed = 0;
+      model.root.traverse((obj) => {
+        const mesh = obj as { geometry?: { addEventListener: (t: string, cb: () => void) => void } };
+        mesh.geometry?.addEventListener('dispose', () => {
+          geometryDisposed += 1;
+        });
+      });
+
+      const tool = new MoveItTool(async () => model);
+      tool.onAttach(makeContext());
+      await flush();
+      // Two trajectory batches: the second rebuilds ghosts
+      tool.onBatch(batch('planner', 'trajectory', 1_000, json(TRAJECTORY_ENVELOPE)));
+      tool.onBatch(batch('planner', 'trajectory', 2_000, json(TRAJECTORY_ENVELOPE)));
+      assert.equal(geometryDisposed, 0, 'shared geometry was disposed during ghost rebuild');
+    },
+  },
+  {
+    name: 'identical trajectory batches skip the FK rebuild',
+    run: async () => {
+      const tool = new MoveItTool(chainLoader);
+      const context = makeContext();
+      tool.onAttach(context);
+      await flush();
+      tool.onBatch(batch('planner', 'trajectory', 1_000, json(TRAJECTORY_ENVELOPE)));
+      const root = rootGroup(context)!;
+      const ghosts = root.children.find((c) => c.name === 'moveit-ghosts') as Group;
+      const firstGhosts = [...ghosts.children];
+      const firstEePath = root.children.find((c) => c.name === 'moveit-ee-path');
+
+      // Same content, later timestamp: no rebuild — same objects survive
+      tool.onBatch(batch('planner', 'trajectory', 2_000, json(TRAJECTORY_ENVELOPE)));
+      assert.deepEqual([...ghosts.children], firstGhosts);
+      assert.equal(root.children.find((c) => c.name === 'moveit-ee-path'), firstEePath);
+
+      // Changed content: rebuild happens
+      const changed = {
+        waypoints: TRAJECTORY_ENVELOPE.waypoints.slice(0, 2),
+      };
+      tool.onBatch(batch('planner', 'trajectory', 3_000, json(changed)));
+      assert.notEqual(root.children.find((c) => c.name === 'moveit-ee-path'), firstEePath);
+    },
+  },
+  {
     name: 'joint_positions batches drive the current pose of the loaded robot',
     run: async () => {
       const tool = new MoveItTool(chainLoader);

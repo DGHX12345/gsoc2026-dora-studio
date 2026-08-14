@@ -9,7 +9,7 @@ import { parseUrdf } from './urdf';
 
 type TestCase = {
   name: string;
-  run: () => void;
+  run: () => void | Promise<void>;
 };
 
 /** 3-link chain: base → revolute(z) → link1 → revolute(z) → link2 →
@@ -167,7 +167,8 @@ let failures = 0;
 
 for (const test of tests) {
   try {
-    test.run();
+    // Async tests must be awaited — a sync runner swallows async failures.
+    await test.run();
     console.log(`ok - ${test.name}`);
   } catch (error) {
     failures += 1;
