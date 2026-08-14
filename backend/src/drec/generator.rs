@@ -348,34 +348,39 @@ impl DrecGenerator {
         for i in 0..frame_count {
             let ts = (i as u64) * interval_nanos;
 
-            // Figure-8 waypoint path, full loop, z = 0.05
-            const WAYPOINT_COUNT: usize = 24;
-            let waypoints: Vec<[f64; 2]> = (0..WAYPOINT_COUNT)
-                .map(|k| {
-                    let t = std::f64::consts::TAU * k as f64 / WAYPOINT_COUNT as f64;
-                    [
-                        (0.28 * t.sin() * 1000.0).round() / 1000.0,
-                        (0.18 * (2.0 * t).sin() * 1000.0).round() / 1000.0,
-                    ]
-                })
-                .collect();
-            entries.push(RecordEntry {
-                node_id: "planner".to_string(),
-                output_id: "waypoints".to_string(),
-                timestamp_offset_nanos: ts,
-                event_bytes: serde_json::to_vec(&serde_json::json!({ "waypoints": waypoints }))
-                    .unwrap(),
-            });
+            // Planner goes quiet for frames 60-89 (stall simulation) so the
+            // M12 stale badge is demonstrable; trajectory keeps flowing.
+            let planner_quiet = i >= 60 && i < 90;
+            if !planner_quiet {
+                // Figure-8 waypoint path, full loop, z = 0.05
+                const WAYPOINT_COUNT: usize = 24;
+                let waypoints: Vec<[f64; 2]> = (0..WAYPOINT_COUNT)
+                    .map(|k| {
+                        let t = std::f64::consts::TAU * k as f64 / WAYPOINT_COUNT as f64;
+                        [
+                            (0.28 * t.sin() * 1000.0).round() / 1000.0,
+                            (0.18 * (2.0 * t).sin() * 1000.0).round() / 1000.0,
+                        ]
+                    })
+                    .collect();
+                entries.push(RecordEntry {
+                    node_id: "planner".to_string(),
+                    output_id: "waypoints".to_string(),
+                    timestamp_offset_nanos: ts,
+                    event_bytes: serde_json::to_vec(&serde_json::json!({ "waypoints": waypoints }))
+                        .unwrap(),
+                });
 
-            // Flat [tx, ty] target point stepping through the figure-8
-            // waypoint path (step 1 for a smooth full loop)
-            let target = waypoints[i % WAYPOINT_COUNT];
-            entries.push(RecordEntry {
-                node_id: "planner".to_string(),
-                output_id: "target_point".to_string(),
-                timestamp_offset_nanos: ts + interval_nanos / 10,
-                event_bytes: serde_json::to_vec(&target).unwrap(),
-            });
+                // Flat [tx, ty] target point stepping through the figure-8
+                // waypoint path (step 1 for a smooth full loop)
+                let target = waypoints[i % WAYPOINT_COUNT];
+                entries.push(RecordEntry {
+                    node_id: "planner".to_string(),
+                    output_id: "target_point".to_string(),
+                    timestamp_offset_nanos: ts + interval_nanos / 10,
+                    event_bytes: serde_json::to_vec(&target).unwrap(),
+                });
+            }
 
             // Synthetic ESDF costmap (single JSON object, plan Revision R3
             // format) with three Gaussian obstacles, emitted every 10th frame
@@ -646,6 +651,22 @@ mod tests {
             .event_bytes
             .clone();
         assert_eq!(a, b);
+    }
+
+    #[test]
+    fn generate_tool_demo_has_planner_quiet_gap() {
+        let (_header, entries) = DrecGenerator::generate_tool_demo(120, 33_333_333);
+        let count = |node: &str, output: &str| {
+            entries
+                .iter()
+                .filter(|e| e.node_id == node && e.output_id == output)
+                .count()
+        };
+        // Frames 60-89 (30 frames) are quiet for waypoints/target, so the
+        // M12 stale badge is demonstrable; trajectory never stops.
+        assert_eq!(count("planner", "waypoints"), 90);
+        assert_eq!(count("planner", "target_point"), 90);
+        assert_eq!(count("planner", "trajectory"), 120);
     }
 
     #[test]
