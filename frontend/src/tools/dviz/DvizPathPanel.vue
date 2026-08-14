@@ -187,7 +187,7 @@ function fmtResolution(v: number) {
 }
 .dviz-path-name code {
   font-family: monospace;
-  font-size: 12px; line-height: 1.4;
+  font-size: 13px; line-height: 1.4;
   color: var(--text-heading);
   word-break: break-all;
 }
@@ -195,7 +195,7 @@ function fmtResolution(v: number) {
   display: flex; flex-wrap: wrap; gap: 6px;
 }
 .dviz-badge {
-  font-size: 11px; font-weight: 600;
+  font-size: 12px; font-weight: 600;
   padding: 2px 8px;
   border-radius: 999px;
 }
@@ -208,8 +208,8 @@ function fmtResolution(v: number) {
   color: var(--accent-yellow);
 }
 .dviz-path-stats {
-  font-size: 12px;
-  color: var(--text-muted-dark);
+  font-size: 13px;
+  color: var(--text-body);
 }
 .dviz-path-actions {
   display: flex; gap: 8px;
@@ -287,8 +287,8 @@ function fmtResolution(v: number) {
 .dviz-costmap-info {
   margin: 0;
   font-family: monospace;
-  font-size: 12px;
-  color: var(--text-muted-dark);
+  font-size: 13px;
+  color: var(--text-body);
   word-break: break-all;
 }
 </style>
