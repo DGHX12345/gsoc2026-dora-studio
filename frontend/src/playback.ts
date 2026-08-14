@@ -25,7 +25,7 @@ export class PlaybackEngine {
   private _bookmarks: Bookmark[] = []
   private _rafId: number | null = null
   private _lastFrameTime: number = 0
-  private _onTick: ((time: number) => void) | null = null
+  private _onTickListeners = new Set<(time: number) => void>()
   private _onStateChange: ((state: PlaybackState) => void) | null = null
   private _seekDebounceTimer: ReturnType<typeof setTimeout> | null = null
 
@@ -37,7 +37,7 @@ export class PlaybackEngine {
 
   set duration(ns: number) { this._durationNanos = ns }
 
-  onTick(cb: (time: number) => void) { this._onTick = cb }
+  onTick(cb: (time: number) => void) { this._onTickListeners.add(cb) }
   onStateChange(cb: (state: PlaybackState) => void) { this._onStateChange = cb }
 
   play(speed?: PlaybackSpeed) {
@@ -57,13 +57,13 @@ export class PlaybackEngine {
 
   seek(timestampNs: number, immediate = false) {
     this._currentTime = Math.max(0, Math.min(timestampNs, this._durationNanos))
-    this._onTick?.(this._currentTime)
+    this._notifyTick(this._currentTime)
     if (!immediate) {
       // Debounce fetches during scrubbing — resolve after 80ms idle
       if (this._seekDebounceTimer) clearTimeout(this._seekDebounceTimer)
       this._seekDebounceTimer = setTimeout(() => {
         this._seekDebounceTimer = null
-        this._onTick?.(this._currentTime)
+        this._notifyTick(this._currentTime)
       }, 80)
     }
   }
@@ -72,7 +72,7 @@ export class PlaybackEngine {
     if (this._rafId !== null) { cancelAnimationFrame(this._rafId); this._rafId = null }
     this._state = 'stopped'
     this._currentTime = 0
-    this._onTick?.(0)
+    this._notifyTick(0)
     this._onStateChange?.('stopped')
   }
 
@@ -127,7 +127,11 @@ export class PlaybackEngine {
       this.pause()
       return
     }
-    this._onTick?.(this._currentTime)
+    this._notifyTick(this._currentTime)
     this._rafId = requestAnimationFrame(() => this._tick())
+  }
+
+  private _notifyTick(t: number) {
+    for (const cb of this._onTickListeners) cb(t)
   }
 }
