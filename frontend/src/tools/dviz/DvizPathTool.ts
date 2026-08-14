@@ -2,14 +2,18 @@
 //
 // Renders waypoints/path/trajectory batches as 3D wide lines (Line2) with
 // start/end markers and direction arrows on each node's primary path, plus a
-// target marker. Path data arrives in the world frame (dviz world topics),
-// so the tf argument is ignored entirely (R11) — no TF transforms.
+// target marker. Costmap/esdf batches (M12 D3) render as a semi-transparent
+// textured plane under the paths, color-ramped blue→yellow→red. Path data
+// arrives in the world frame (dviz world topics), so the tf argument is
+// ignored entirely (R11) — no TF transforms.
 //
 // The tool is the single source of truth for the D4 control panel:
-// subscribe()/getSnapshot()/setPathVisible() expose path/target state.
+// subscribe()/getSnapshot()/setPathVisible()/setCostmapVisible()/
+// setCostmapOpacity() expose path/target/costmap state.
 
 import {
   ConeGeometry,
+  DataTexture,
   DynamicDrawUsage,
   Group,
   InstancedMesh,
@@ -17,8 +21,11 @@ import {
   Matrix4,
   Mesh,
   MeshBasicMaterial,
+  NearestFilter,
+  PlaneGeometry,
   Quaternion,
   SphereGeometry,
+  SRGBColorSpace,
   Vector3,
 } from 'three';
 import { Line2 } from 'three/examples/jsm/lines/Line2.js';
@@ -28,7 +35,13 @@ import type { Component } from 'vue';
 
 import type { TfTree } from '../tf';
 import type { ToolBatch, ToolContext, ViewportTool } from '../types';
-import { computePathLength, parseTarget, parseTrajectory, parseWaypoints } from './parse';
+import {
+  computePathLength,
+  parseCostmap,
+  parseTarget,
+  parseTrajectory,
+  parseWaypoints,
+} from './parse';
 
 const NODE_COLORS = [0x22d3ee, 0xe879f9, 0xfb923c]; // cyan, magenta, orange
 const TARGET_COLOR = 0xff6ad5;
@@ -42,6 +55,36 @@ const ARROW_EVERY = 10; // direction arrow on every 10th waypoint
 const CONE_RADIUS = 0.015;
 const CONE_HEIGHT = 0.05;
 const CONE_SEGMENTS = 8;
+const COSTMAP_DEFAULT_OPACITY = 0.6;
+/** Costmap plane height: below the path lines (z = 0.05), above the ground. */
+const COSTMAP_Z = 0.02;
+
+/** 256-entry RGB lookup: blue (0,0,255) at 0 → yellow (255,255,0) at 0.5 →
+ * red (255,0,0) at 1, piecewise linear. Returns Uint8Array of length 768. */
+export function buildCostmapLUT(): Uint8Array {
+  const lut = new Uint8Array(256 * 3);
+  for (let i = 0; i < 256; i++) {
+    const t = i / 255;
+    let r: number;
+    let g: number;
+    let b: number;
+    if (t <= 0.5) {
+      const k = t / 0.5; // blue → yellow: 0..1
+      r = 255 * k;
+      g = 255 * k;
+      b = 255 * (1 - k);
+    } else {
+      const k = (t - 0.5) / 0.5; // yellow → red: 0..1
+      r = 255;
+      g = 255 * (1 - k);
+      b = 0;
+    }
+    lut[3 * i] = Math.round(r);
+    lut[3 * i + 1] = Math.round(g);
+    lut[3 * i + 2] = Math.round(b);
+  }
+  return lut;
+}
 
 /** Pure helper: bounding box of flat xyz points → { center, radius }.
  * radius = half-diagonal of the box (covers all points). */
@@ -101,10 +144,21 @@ export interface PathInfo {
   stale: boolean;
 }
 
+export interface CostmapSnapshot {
+  visible: boolean;
+  opacity: number;
+  width: number;
+  height: number;
+  resolution: number;
+  lastBatchTs: number;
+}
+
 export interface ToolSnapshot {
   paths: PathInfo[];
   target: { x: number; y: number; z: number } | null;
   lastSeekTs: number | null;
+  /** null until the first valid costmap/esdf batch. */
+  costmap: CostmapSnapshot | null;
 }
 
 interface PathState {
@@ -142,7 +196,8 @@ export class DvizPathTool implements ViewportTool {
   readonly id = 'dviz-path';
   readonly displayName = 'dviz Path Visualization';
   readonly category = 'planning' as const;
-  readonly description = 'Renders planner waypoints/trajectory/target data as 3D paths.';
+  readonly description =
+    'Renders planner waypoints/trajectory/target data as 3D paths and costmap/esdf grids as a ground plane.';
   readonly subscribePorts = [
     { nodeIdPattern: /.*/, outputIdPattern: /^(waypoints|path)$/i },
     { nodeIdPattern: /.*/, outputIdPattern: /^trajectory$/i },
@@ -156,6 +211,17 @@ export class DvizPathTool implements ViewportTool {
   private targetMarker: Mesh | null = null;
   private targetMarkerGeometry: SphereGeometry | null = null;
   private targetMarkerMaterial: MeshBasicMaterial | null = null;
+
+  private costmapMesh: Mesh | null = null;
+  private costmapTexture: DataTexture | null = null;
+  private costmapMaterial: MeshBasicMaterial | null = null;
+  private costmapGeometry: PlaneGeometry | null = null;
+  private costmapWidth = 0;
+  private costmapHeight = 0;
+  private costmapResolution = 0;
+  private costmapVisible = true;
+  private costmapOpacity = COSTMAP_DEFAULT_OPACITY;
+  private costmapLastBatchTs = 0;
 
   /** Path identity keyed by `${nodeId}/${outputId}`, insertion order = arrival. */
   private readonly paths = new Map<string, PathState>();
@@ -193,8 +259,9 @@ export class DvizPathTool implements ViewportTool {
       this.handlePath(batch, outputId, parseTrajectory(batch.payload));
     } else if (outputId === 'target_point' || outputId === 'target' || outputId === 'goal') {
       this.handleTarget(batch);
+    } else if (outputId === 'costmap' || outputId === 'esdf') {
+      this.handleCostmap(batch);
     }
-    // costmap | esdf: ignored for now — costmap rendering is a later task.
   }
 
   onTimelineSeek(timestampNs: number) {
@@ -220,6 +287,14 @@ export class DvizPathTool implements ViewportTool {
     }
     this.targetMarkerGeometry?.dispose();
     this.targetMarkerMaterial?.dispose();
+
+    this.disposeCostmapResources();
+    this.costmapWidth = 0;
+    this.costmapHeight = 0;
+    this.costmapResolution = 0;
+    this.costmapVisible = true;
+    this.costmapOpacity = COSTMAP_DEFAULT_OPACITY;
+    this.costmapLastBatchTs = 0;
 
     this.paths.clear();
     this.pathKeysByNode.clear();
@@ -258,7 +333,33 @@ export class DvizPathTool implements ViewportTool {
       })),
       target: this.target ? { ...this.target } : null,
       lastSeekTs: this.lastSeekTs,
+      costmap: this.costmapMesh
+        ? {
+            visible: this.costmapVisible,
+            opacity: this.costmapOpacity,
+            width: this.costmapWidth,
+            height: this.costmapHeight,
+            resolution: this.costmapResolution,
+            lastBatchTs: this.costmapLastBatchTs,
+          }
+        : null,
     };
+  }
+
+  /** D4 panel: show/hide the costmap plane (sticky before the first batch). */
+  setCostmapVisible(visible: boolean) {
+    this.costmapVisible = visible;
+    if (this.costmapMesh) this.costmapMesh.visible = visible;
+    this.context?.requestRender();
+    this.notify();
+  }
+
+  /** D4 panel: plane opacity, clamped to [0, 1]. */
+  setCostmapOpacity(opacity: number) {
+    this.costmapOpacity = Math.min(1, Math.max(0, opacity));
+    if (this.costmapMaterial) this.costmapMaterial.opacity = this.costmapOpacity;
+    this.context?.requestRender();
+    this.notify();
   }
 
   setPathVisible(key: string, visible: boolean) {
@@ -305,6 +406,89 @@ export class DvizPathTool implements ViewportTool {
     this.targetMarker.visible = true;
     this.context?.requestRender();
     this.notify();
+  }
+
+  /** Costmap/esdf batch: render the grid as a textured ground plane. Invalid
+   * payloads keep the last known costmap (no throw, no scene change). */
+  private handleCostmap(batch: ToolBatch) {
+    if (!this.group) return;
+    const costmap = parseCostmap(batch.payload);
+    if (costmap === null) return;
+    const { width, height, resolution, values } = costmap;
+    this.costmapWidth = width;
+    this.costmapHeight = height;
+    this.costmapResolution = resolution;
+    this.costmapLastBatchTs = batch.timestampNs;
+
+    // Cell color = LUT[clamp(value, 0, 1)]; RGB interleaved per cell.
+    const rgb = new Uint8Array(width * height * 3);
+    const lut = buildCostmapLUT();
+    for (let i = 0; i < values.length; i++) {
+      const t = Math.min(1, Math.max(0, values[i]));
+      const k = Math.round(t * 255) * 3;
+      const o = i * 3;
+      rgb[o] = lut[k];
+      rgb[o + 1] = lut[k + 1];
+      rgb[o + 2] = lut[k + 2];
+    }
+
+    if (
+      this.costmapTexture &&
+      this.costmapTexture.image.width === width &&
+      this.costmapTexture.image.height === height
+    ) {
+      // Same dimensions: reuse texture and geometry, refresh the data only.
+      // (DataTexture always carries the array we constructed it with.)
+      this.costmapTexture.image.data!.set(rgb);
+      this.costmapTexture.needsUpdate = true;
+    } else {
+      // Dimensions changed: drop the old plane and rebuild from scratch.
+      this.disposeCostmapResources();
+      this.createCostmapMesh(width, height, resolution, rgb);
+    }
+    this.context?.requestRender();
+    this.notify();
+  }
+
+  private createCostmapMesh(width: number, height: number, resolution: number, rgb: Uint8Array) {
+    const texture = new DataTexture(rgb, width, height);
+    texture.magFilter = NearestFilter; // cell look: no blending between cells
+    texture.minFilter = NearestFilter;
+    texture.colorSpace = SRGBColorSpace;
+    texture.needsUpdate = true;
+
+    const geometry = new PlaneGeometry(width * resolution, height * resolution);
+    geometry.rotateX(-Math.PI / 2); // lies flat in the XY world plane
+
+    const material = new MeshBasicMaterial({
+      map: texture,
+      transparent: true,
+      opacity: this.costmapOpacity,
+      depthWrite: false,
+    });
+
+    const mesh = new Mesh(geometry, material);
+    mesh.name = 'costmap';
+    mesh.position.z = COSTMAP_Z; // below the path lines (0.05), above ground (0)
+    mesh.visible = this.costmapVisible;
+
+    this.costmapTexture = texture;
+    this.costmapGeometry = geometry;
+    this.costmapMaterial = material;
+    this.costmapMesh = mesh;
+    this.group!.add(mesh);
+  }
+
+  /** Drop the costmap plane from the group and dispose its GPU resources. */
+  private disposeCostmapResources() {
+    if (this.costmapMesh && this.group) this.group.remove(this.costmapMesh);
+    this.costmapTexture?.dispose();
+    this.costmapMaterial?.dispose();
+    this.costmapGeometry?.dispose();
+    this.costmapMesh = null;
+    this.costmapTexture = null;
+    this.costmapMaterial = null;
+    this.costmapGeometry = null;
   }
 
   private handlePath(batch: ToolBatch, outputId: string, points: number[]) {

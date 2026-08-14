@@ -4,14 +4,26 @@
 // (including Line2/LineMaterial) works without a renderer.
 
 import assert from 'node:assert/strict';
-import { Group, InstancedMesh, Mesh, PerspectiveCamera, Scene, SphereGeometry } from 'three';
+import {
+  DataTexture,
+  Group,
+  InstancedMesh,
+  Mesh,
+  MeshBasicMaterial,
+  NearestFilter,
+  PerspectiveCamera,
+  PlaneGeometry,
+  Scene,
+  SphereGeometry,
+  SRGBColorSpace,
+} from 'three';
 import { Line2 } from 'three/examples/jsm/lines/Line2.js';
 import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js';
 
 import { matchToolPorts } from '../matching';
 import type { ToolBatch, ToolContext, ToolPayload } from '../types';
 import { computePathLength } from './parse';
-import { computePathBounds, computeStaleness, DvizPathTool } from './DvizPathTool';
+import { buildCostmapLUT, computePathBounds, computeStaleness, DvizPathTool } from './DvizPathTool';
 
 type TestCase = {
   name: string;
@@ -74,6 +86,18 @@ const waypointXY = (n: number): number[] => {
   for (let i = 0; i < n; i++) out.push(i, 0);
   return out;
 };
+
+/** The costmap ground-plane mesh inside the dviz-path group, if any. */
+const costmapMeshOf = (context: ToolContext): Mesh | undefined =>
+  rootGroup(context).children.find((c) => c.name === 'costmap') as Mesh | undefined;
+
+const costmapTextureOf = (mesh: Mesh): DataTexture =>
+  (mesh.material as MeshBasicMaterial).map as DataTexture;
+
+/** A valid costmap JSON payload: width×height values normalized to [0, 1]. */
+const costmapJson = (width: number, height: number, resolution: number, values: number[]) => ({
+  json: { width, height, resolution, values },
+});
 
 const tests: TestCase[] = [
   {
@@ -252,26 +276,271 @@ const tests: TestCase[] = [
     },
   },
   {
-    name: 'a costmap batch is ignored: no new path and no throw',
+    name: 'costmap and esdf batches create no path and no target but no throw',
+    run: () => {
+      const context = makeContext();
+      const tool = new DvizPathTool();
+      tool.onAttach(context);
+
+      tool.onBatch(batch('planner', 'costmap', 100, costmapJson(2, 2, 1, [0, 0, 0, 0])));
+      tool.onBatch(batch('planner', 'esdf', 200, costmapJson(2, 2, 1, [0, 0, 0, 0])));
+
+      const snapshot = tool.getSnapshot();
+      assert.equal(snapshot.paths.length, 0);
+      assert.equal(snapshot.target, null);
+      // The esdf batch is the last known costmap source.
+      assert.equal(snapshot.costmap?.width, 2);
+      assert.equal(snapshot.costmap?.lastBatchTs, 200);
+      assert.ok(costmapMeshOf(context) instanceof Mesh);
+      tool.onDetach();
+    },
+  },
+  {
+    name: 'buildCostmapLUT: blue→yellow→red piecewise ramp, 768 bytes',
+    run: () => {
+      const lut = buildCostmapLUT();
+      assert.equal(lut.length, 768);
+      // Endpoints: blue at 0, red at 1.
+      assert.deepEqual([...lut.slice(0, 3)], [0, 0, 255]);
+      assert.deepEqual([...lut.slice(255 * 3, 255 * 3 + 3)], [255, 0, 0]);
+      // Entries 127/128 sit at the blue→yellow/yellow→red seam: ≈ yellow.
+      for (const i of [127, 128]) {
+        assert.ok(Math.abs(lut[3 * i] - 255) <= 1, `entry ${i} red channel near 255`);
+        assert.ok(Math.abs(lut[3 * i + 1] - 255) <= 1, `entry ${i} green channel near 255`);
+        assert.ok(lut[3 * i + 2] <= 1, `entry ${i} blue channel near 0`);
+      }
+      // Blue→yellow half (0..127): red and green climb, blue falls.
+      for (let i = 1; i <= 127; i++) {
+        assert.ok(lut[3 * i] >= lut[3 * (i - 1)], `red non-decreasing at ${i}`);
+        assert.ok(lut[3 * i + 1] >= lut[3 * (i - 1) + 1], `green non-decreasing at ${i}`);
+        assert.ok(lut[3 * i + 2] <= lut[3 * (i - 1) + 2], `blue non-increasing at ${i}`);
+      }
+      // Yellow→red half (128..255): red pinned, green falls, blue stays 0.
+      for (let i = 129; i < 256; i++) {
+        assert.equal(lut[3 * i], 255, `red pinned at ${i}`);
+        assert.ok(lut[3 * i + 1] <= lut[3 * (i - 1) + 1], `green non-increasing at ${i}`);
+        assert.equal(lut[3 * i + 2], 0, `blue zero at ${i}`);
+      }
+    },
+  },
+  {
+    name: 'a valid costmap batch creates a semi-transparent textured plane and snapshot',
+    run: () => {
+      const context = makeContext();
+      const tool = new DvizPathTool();
+      tool.onAttach(context);
+
+      const values = Array.from({ length: 16 }, (_, i) => i / 15);
+      tool.onBatch(batch('planner', 'costmap', 100, costmapJson(4, 4, 0.5, values)));
+
+      const mesh = costmapMeshOf(context)!;
+      assert.ok(mesh instanceof Mesh);
+      assert.ok(mesh.geometry instanceof PlaneGeometry);
+      // World extent = cell count × resolution, flat in the XY plane at z=0.02.
+      assert.equal(mesh.geometry.parameters.width, 4 * 0.5);
+      assert.equal(mesh.geometry.parameters.height, 4 * 0.5);
+      assert.ok(Math.abs(mesh.position.z - 0.02) < 1e-6);
+      assert.equal(mesh.visible, true);
+
+      const material = mesh.material as MeshBasicMaterial;
+      assert.equal(material.transparent, true);
+      assert.equal(material.opacity, 0.6);
+      assert.equal(material.depthWrite, false);
+      const texture = costmapTextureOf(mesh);
+      assert.ok(texture instanceof DataTexture);
+      assert.equal(texture.image.width, 4);
+      assert.equal(texture.image.height, 4);
+      assert.equal((texture.image.data as Uint8Array).length, 4 * 4 * 3);
+      assert.equal(texture.magFilter, NearestFilter);
+      assert.equal(texture.minFilter, NearestFilter);
+      assert.equal(texture.colorSpace, SRGBColorSpace);
+
+      const snapshot = tool.getSnapshot();
+      assert.ok(snapshot.costmap);
+      assert.equal(snapshot.costmap.visible, true);
+      assert.equal(snapshot.costmap.opacity, 0.6);
+      assert.equal(snapshot.costmap.width, 4);
+      assert.equal(snapshot.costmap.height, 4);
+      assert.equal(snapshot.costmap.resolution, 0.5);
+      assert.equal(snapshot.costmap.lastBatchTs, 100);
+      assert.equal(snapshot.paths.length, 0);
+      tool.onDetach();
+    },
+  },
+  {
+    name: 'a same-dimension costmap batch reuses the texture and geometry (data refreshed)',
     run: () => {
       const context = makeContext();
       const tool = new DvizPathTool();
       tool.onAttach(context);
 
       tool.onBatch(
-        batch('planner', 'costmap', 100, {
-          json: { width: 2, height: 2, resolution: 1, values: [0, 0, 0, 0] },
-        }),
+        batch('planner', 'costmap', 100, costmapJson(4, 4, 0.5, Array.from({ length: 16 }, (_, i) => i / 15))),
       );
-      tool.onBatch(
-        batch('planner', 'esdf', 200, {
-          json: { width: 2, height: 2, resolution: 1, values: [0, 0, 0, 0] },
-        }),
-      );
+      const mesh = costmapMeshOf(context)!;
+      const texture = costmapTextureOf(mesh);
+      const geometry = mesh.geometry;
+      // The tool always stores the Uint8Array it constructed the texture with.
+      const data = texture.image.data as Uint8Array;
 
-      assert.equal(tool.getSnapshot().paths.length, 0);
-      assert.equal(tool.getSnapshot().target, null);
+      // All-free (0) map → pure blue; same texture object, data rewritten.
+      tool.onBatch(batch('planner', 'costmap', 200, costmapJson(4, 4, 0.5, Array(16).fill(0))));
+      assert.deepEqual([data[0], data[1], data[2]], [0, 0, 255]);
+      assert.equal(costmapTextureOf(costmapMeshOf(context)!), texture);
+      assert.equal(costmapMeshOf(context)!.geometry, geometry);
+      // needsUpdate is a write-only setter in three 0.185: every refresh bump
+      // increments version (1 = creation, 2 = this refresh).
+      assert.ok(texture.version >= 2, 'texture refresh bumped version');
+
+      // All-obstacle (1) map → pure red.
+      tool.onBatch(batch('planner', 'costmap', 300, costmapJson(4, 4, 0.5, Array(16).fill(1))));
+      assert.deepEqual([data[0], data[1], data[2]], [255, 0, 0]);
+
+      // Still exactly one plane in the group; snapshot dims/timestamp follow.
+      assert.equal(rootGroup(context).children.filter((c) => c.name === 'costmap').length, 1);
+      assert.equal(tool.getSnapshot().costmap?.lastBatchTs, 300);
       tool.onDetach();
+    },
+  },
+  {
+    name: 'a different-dimension costmap batch rebuilds the plane and disposes the old texture',
+    run: () => {
+      const context = makeContext();
+      const tool = new DvizPathTool();
+      tool.onAttach(context);
+
+      tool.onBatch(batch('planner', 'costmap', 100, costmapJson(4, 4, 0.5, Array(16).fill(0))));
+      const oldMesh = costmapMeshOf(context)!;
+      const oldTexture = costmapTextureOf(oldMesh);
+
+      tool.onBatch(batch('planner', 'costmap', 200, costmapJson(8, 8, 0.25, Array(64).fill(0.5))));
+
+      const meshes = rootGroup(context).children.filter((c) => c.name === 'costmap');
+      assert.equal(meshes.length, 1);
+      const rebuilt = meshes[0] as Mesh;
+      assert.notEqual(rebuilt, oldMesh);
+      const newTexture = costmapTextureOf(rebuilt);
+      assert.notEqual(newTexture, oldTexture); // old texture no longer referenced
+      assert.ok(newTexture.image.width === 8 && newTexture.image.height === 8);
+      assert.ok(rebuilt.geometry instanceof PlaneGeometry);
+      assert.equal(rebuilt.geometry.parameters.width, 8 * 0.25);
+      assert.equal(rebuilt.geometry.parameters.height, 8 * 0.25);
+      assert.equal(tool.getSnapshot().costmap?.width, 8);
+      assert.equal(tool.getSnapshot().costmap?.resolution, 0.25);
+      tool.onDetach();
+    },
+  },
+  {
+    name: 'setCostmapOpacity clamps to [0,1] and notifies; snapshot follows',
+    run: () => {
+      const context = makeContext();
+      const tool = new DvizPathTool();
+      let notified = 0;
+      tool.subscribe(() => {
+        notified += 1;
+      });
+      tool.onAttach(context);
+      tool.onBatch(batch('planner', 'costmap', 100, costmapJson(2, 2, 1, [0, 0.5, 0.25, 1])));
+      assert.equal(notified, 1);
+
+      const material = costmapMeshOf(context)!.material as MeshBasicMaterial;
+      tool.setCostmapOpacity(0.3);
+      assert.equal(material.opacity, 0.3);
+      assert.equal(tool.getSnapshot().costmap?.opacity, 0.3);
+      assert.equal(notified, 2);
+
+      tool.setCostmapOpacity(1.7); // clamped down to 1
+      assert.equal(material.opacity, 1);
+      assert.equal(tool.getSnapshot().costmap?.opacity, 1);
+
+      tool.setCostmapOpacity(-0.5); // clamped up to 0
+      assert.equal(material.opacity, 0);
+      assert.equal(tool.getSnapshot().costmap?.opacity, 0);
+      assert.equal(notified, 4);
+      tool.onDetach();
+    },
+  },
+  {
+    name: 'setCostmapVisible toggles the plane and notifies; snapshot follows',
+    run: () => {
+      const context = makeContext();
+      const tool = new DvizPathTool();
+      let notified = 0;
+      tool.subscribe(() => {
+        notified += 1;
+      });
+      tool.onAttach(context);
+      tool.onBatch(batch('planner', 'costmap', 100, costmapJson(2, 2, 1, [0, 0, 0, 0])));
+
+      const mesh = costmapMeshOf(context)!;
+      tool.setCostmapVisible(false);
+      assert.equal(mesh.visible, false);
+      assert.equal(tool.getSnapshot().costmap?.visible, false);
+      assert.equal(notified, 2);
+
+      tool.setCostmapVisible(true);
+      assert.equal(mesh.visible, true);
+      assert.equal(tool.getSnapshot().costmap?.visible, true);
+      assert.equal(notified, 3);
+      tool.onDetach();
+    },
+  },
+  {
+    name: 'an invalid costmap payload keeps the last known costmap without throwing',
+    run: () => {
+      const context = makeContext();
+      const tool = new DvizPathTool();
+      tool.onAttach(context);
+      tool.onBatch(batch('planner', 'costmap', 100, costmapJson(2, 2, 1, [0, 0.5, 0.25, 1])));
+      const mesh = costmapMeshOf(context)!;
+      const texture = costmapTextureOf(mesh);
+
+      // Wrong values length: parseCostmap rejects it.
+      assert.doesNotThrow(() => {
+        tool.onBatch(batch('planner', 'costmap', 200, costmapJson(2, 2, 1, [0, 1])));
+      });
+      // Plane and texture untouched; snapshot keeps the last known dims/ts.
+      assert.equal(costmapMeshOf(context), mesh);
+      assert.equal(costmapTextureOf(costmapMeshOf(context)!), texture);
+      assert.equal(tool.getSnapshot().costmap?.width, 2);
+      assert.equal(tool.getSnapshot().costmap?.lastBatchTs, 100);
+      tool.onDetach();
+    },
+  },
+  {
+    name: 'a costmap batch before any path batch works: plane present, paths empty',
+    run: () => {
+      const context = makeContext();
+      const tool = new DvizPathTool();
+      tool.onAttach(context);
+
+      tool.onBatch(batch('planner', 'esdf', 100, costmapJson(2, 2, 1, [0.5, 0.5, 0.5, 0.5])));
+      const mesh = costmapMeshOf(context)!;
+      assert.ok(mesh instanceof Mesh);
+      assert.equal(mesh.visible, true);
+      const snapshot = tool.getSnapshot();
+      assert.ok(snapshot.costmap);
+      assert.equal(snapshot.costmap.width, 2);
+      assert.equal(snapshot.costmap.lastBatchTs, 100);
+      assert.equal(snapshot.paths.length, 0);
+      assert.equal(snapshot.target, null);
+      tool.onDetach();
+    },
+  },
+  {
+    name: 'onDetach after a costmap leaves the scene empty and the snapshot costmap null',
+    run: () => {
+      const context = makeContext();
+      const tool = new DvizPathTool();
+      tool.onAttach(context);
+      tool.onBatch(batch('planner', 'costmap', 100, costmapJson(2, 2, 1, [0, 0, 0, 0])));
+      assert.equal(context.scene.children.length, 1);
+
+      tool.onDetach();
+      assert.equal(context.scene.children.length, 0);
+      assert.equal(tool.getSnapshot().costmap, null);
+      tool.onDetach(); // double detach stays safe
+      assert.equal(tool.getSnapshot().costmap, null);
     },
   },
   {
@@ -287,6 +556,7 @@ const tests: TestCase[] = [
       assert.equal(snapshot.paths.length, 0);
       assert.equal(snapshot.target, null);
       assert.equal(snapshot.lastSeekTs, null);
+      assert.equal(snapshot.costmap, null);
     },
   },
   {
@@ -362,9 +632,9 @@ const tests: TestCase[] = [
       tool.onDetach();
 
       assert.equal(context.scene.children.length, 0);
-      assert.deepEqual(tool.getSnapshot(), { paths: [], target: null, lastSeekTs: null });
+      assert.deepEqual(tool.getSnapshot(), { paths: [], target: null, lastSeekTs: null, costmap: null });
       tool.onDetach(); // must not throw
-      assert.deepEqual(tool.getSnapshot(), { paths: [], target: null, lastSeekTs: null });
+      assert.deepEqual(tool.getSnapshot(), { paths: [], target: null, lastSeekTs: null, costmap: null });
     },
   },
   {
@@ -466,7 +736,7 @@ const tests: TestCase[] = [
       assert.equal(context.scene.children.length, 1);
       tool.onDetach();
       assert.equal(context.scene.children.length, 0);
-      assert.deepEqual(tool.getSnapshot(), { paths: [], target: null, lastSeekTs: null });
+      assert.deepEqual(tool.getSnapshot(), { paths: [], target: null, lastSeekTs: null, costmap: null });
 
       tool.onAttach(context);
       tool.onBatch(batch('planner', 'waypoints', 200, f32([5, 5, 6, 5, 7, 5])));
