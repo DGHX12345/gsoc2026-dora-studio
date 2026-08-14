@@ -852,11 +852,11 @@ onBeforeUnmount(() => {
   position: absolute; bottom: 12px; left: 50%; transform: translateX(-50%);
   display: flex; align-items: center; gap: 6px;
   padding: 8px 14px;
-  background: color-mix(in srgb, var(--card-surface) 92%, transparent);
+  background: color-mix(in srgb, var(--card-surface) 96%, transparent);
   backdrop-filter: blur(8px);
-  border: 1px solid var(--hairline);
+  border: 1px solid color-mix(in srgb, var(--text-muted-dark) 45%, var(--hairline));
   border-radius: 10px;
-  box-shadow: 0 4px 16px rgba(0,0,0,0.3);
+  box-shadow: 0 6px 24px rgba(0,0,0,0.45);
   z-index: 10;
 }
 .rp-path-input {
@@ -868,25 +868,26 @@ onBeforeUnmount(() => {
 .rp-path-input:disabled { opacity: 0.5; }
 .rp-path-input::placeholder { color: var(--text-muted-dark); }
 .rp-time {
-  font-size: 14px; font-family: monospace; color: var(--accent-cyan); font-weight: 600;
+  font-size: 14px; font-family: monospace; color: var(--text-heading); font-weight: 600;
   white-space: nowrap; min-width: 130px; text-align: center;
 }
 .rp-btn {
-  padding: 7px 12px; border: none; border-radius: 5px;
+  padding: 9px 14px; border: none; border-radius: 5px;
   font-size: 13px; cursor: pointer;
-  background: var(--canvas-base); color: var(--text-body);
+  background: var(--canvas-base); color: var(--text-heading);
   border: 1px solid var(--hairline);
 }
 .rp-btn:hover { background: var(--card-hover); color: var(--text-heading); }
 .rp-btn-close { color: var(--accent-red); border-color: var(--accent-red); }
 .rp-error { color: var(--accent-red); font-size: 13px; max-width: 300px; }
 .rp-scrubber {
-  width: 140px; height: 4px;
+  width: 140px; height: 8px;
   -webkit-appearance: none; appearance: none;
-  background: var(--hairline); border-radius: 2px; outline: none;
+  background: color-mix(in srgb, var(--text-muted-dark) 35%, transparent);
+  border-radius: 4px; outline: none;
 }
 .rp-scrubber::-webkit-slider-thumb {
-  -webkit-appearance: none; width: 12px; height: 12px;
+  -webkit-appearance: none; width: 14px; height: 14px;
   border-radius: 50%; background: var(--accent-red); cursor: pointer;
 }
 .pill.info { background: color-mix(in srgb, var(--accent-cyan) 20%, transparent); color: var(--accent-cyan); }
