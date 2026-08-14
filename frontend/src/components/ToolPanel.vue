@@ -45,7 +45,7 @@
               <summary>{{ t.tools.controls }}</summary>
               <div class="tool-controls-body">
                 <component :is="tool.panelComponent" v-if="tool.panelComponent" :tool="tool" />
-                <p v-else class="tool-controls-hint">{{ t.tools.controlsHint }}</p>
+                <p v-else class="tool-controls-hint">{{ t.tools.noControls }}</p>
               </div>
             </details>
           </div>

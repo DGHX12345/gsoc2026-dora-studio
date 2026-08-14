@@ -81,7 +81,7 @@ type Messages = {
     categoryDiagnostics: string
     categoryPlanning: string
     controls: string
-    controlsHint: string
+    noControls: string
     dviz: {
       hint: string
       points: string
@@ -196,7 +196,7 @@ const messages: Record<Locale, Messages> = {
       categoryDiagnostics: '诊断',
       categoryPlanning: '规划',
       controls: '控制面板',
-      controlsHint: '挂载后展开此面板查看工具控制项',
+      noControls: '该工具暂无可配置项（控制面板随后续版本提供）',
       dviz: {
         hint: '暂无路径数据——加载工具演示 .drec 并开始回放',
         points: '个点',
@@ -309,7 +309,7 @@ const messages: Record<Locale, Messages> = {
       categoryDiagnostics: 'Diagnostics',
       categoryPlanning: 'Planning',
       controls: 'Control panel',
-      controlsHint: 'Attach the tool to expand its controls',
+      noControls: 'This tool has no controls yet (panel ships in a later milestone)',
       dviz: {
         hint: 'No path data yet — load the tool demo .drec and start replay',
         points: 'points',

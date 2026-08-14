@@ -8,3 +8,6 @@ import './feed.test';
 import './dviz/DvizPathTool.test';
 import './dviz/format.test';
 import './dviz/parse.test';
+import './moveit/parse.test';
+import './moveit/joint-config.test';
+import './moveit/MoveItTool.test';
