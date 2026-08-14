@@ -1,6 +1,6 @@
-# Structural example for the dviz Path Visualization tool (M12 D5).
-# Node scripts are intentionally not included: dora dataflows cannot run in
-# this dev environment (Python 3.10 vs dora 3.11 requirement).
+# Structural example for the dviz Path Visualization tool (M12 D5):
+# lets Studio's tool recommendation engine detect planner ports.
+# Node scripts are intentionally omitted.
 nodes:
   - id: planner
     path: planner.py

@@ -494,8 +494,10 @@ function stopReplay() {
   Object.assign(replayJoints, createNanoArmJointState())
   Object.assign(replayBasePose, { x: 0, y: 0, yaw: 0 })
   // Clear the replay-derived recommendations, then fall back to any
-  // recommendations derivable from the discovered dataflow graphs.
+  // recommendations derivable from the discovered dataflow graphs. The seq
+  // bump invalidates any in-flight dataflow scan before the new one starts.
   toolRecommendations.value = []
+  dataflowRequestSeq++
   updateRecommendationsFromDataflows()
 }
 
@@ -503,6 +505,9 @@ function stopReplay() {
 const nanoViewer = ref<InstanceType<typeof NanoRobotViewer> | null>(null)
 const toolsPanelOpen = ref(false)
 const toolRecommendations = ref<ToolRecommendation[]>([])
+// Monotonic token for async tool-recommendation requests: a newer dataflow
+// scan or replay action invalidates an in-flight dataflow scan.
+let dataflowRequestSeq = 0
 
 function toggleTool(id: string, enable: boolean) {
   if (enable) {
@@ -522,6 +527,8 @@ function toggleTool(id: string, enable: boolean) {
 }
 
 async function updateToolRecommendations(recordingId: string) {
+  // A replay-derived update supersedes any in-flight dataflow scan.
+  dataflowRequestSeq++
   try {
     const { streams } = await getRecordingStreams(recordingId)
     const recommendations = findRecommendations(
@@ -537,29 +544,28 @@ async function updateToolRecommendations(recordingId: string) {
 // M12 D5: recommend tools from discovered dataflow graphs (examples/ scan) so
 // the Tools panel shows matches even without a .drec replay loaded. Fetches
 // every dataflow's graph and merges its (nodeId, outputId) ports into the
-// current recommendations; failures skip that dataflow silently.
+// current recommendations (malformed graphs yield no ports). A token guard
+// drops the result if a replay action started meanwhile.
 async function updateRecommendationsFromDataflows() {
+  const token = ++dataflowRequestSeq
   const tools = toolRegistry.list().map((tool) => ({ id: tool.id, subscribePorts: tool.subscribePorts }))
   let recommendations: ToolRecommendation[] = []
   try {
     const { data: dataflows } = await getDataflows([])
     for (const dataflow of dataflows) {
-      try {
-        const { data: graph } = await getDataflowGraph(dataflow.id, { nodes: [], edges: [], diagnostics: [] })
-        const ports = graph.nodes.flatMap((node) =>
-          node.outputs.map((outputId) => ({ nodeId: node.id, outputId })),
-        )
-        recommendations = mergeRecommendations(
-          recommendations,
-          findRecommendations(tools, ports),
-        )
-      } catch {
-        // Skip this dataflow silently; it may be malformed or unreadable.
-      }
+      const { data: graph } = await getDataflowGraph(dataflow.id, { nodes: [], edges: [], diagnostics: [] })
+      const ports = graph.nodes.flatMap((node) =>
+        node.outputs.map((outputId) => ({ nodeId: node.id, outputId })),
+      )
+      recommendations = mergeRecommendations(
+        recommendations,
+        findRecommendations(tools, ports),
+      )
     }
   } catch {
     // No dataflows available; leave recommendations empty.
   }
+  if (token !== dataflowRequestSeq) return
   toolRecommendations.value = recommendations
 }
 
