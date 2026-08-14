@@ -13,9 +13,11 @@ import {
   NearestFilter,
   PerspectiveCamera,
   PlaneGeometry,
+  RGBAFormat,
   Scene,
   SphereGeometry,
   SRGBColorSpace,
+  Vector3,
 } from 'three';
 import { Line2 } from 'three/examples/jsm/lines/Line2.js';
 import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js';
@@ -342,6 +344,15 @@ const tests: TestCase[] = [
       assert.ok(Math.abs(mesh.position.z - 0.02) < 1e-6);
       assert.equal(mesh.visible, true);
 
+      // Plane lies flat on the XY ground plane: no rotation, normal stays +Z.
+      assert.deepEqual([mesh.quaternion.x, mesh.quaternion.y, mesh.quaternion.z, mesh.quaternion.w], [
+        0, 0, 0, 1,
+      ]);
+      assert.deepEqual(
+        new Vector3(0, 0, 1).applyQuaternion(mesh.quaternion).toArray(),
+        [0, 0, 1],
+      );
+
       const material = mesh.material as MeshBasicMaterial;
       assert.equal(material.transparent, true);
       assert.equal(material.opacity, 0.6);
@@ -350,7 +361,9 @@ const tests: TestCase[] = [
       assert.ok(texture instanceof DataTexture);
       assert.equal(texture.image.width, 4);
       assert.equal(texture.image.height, 4);
-      assert.equal((texture.image.data as Uint8Array).length, 4 * 4 * 3);
+      // 4 bytes/texel (RGBA): the default RGBAFormat matches the buffer stride.
+      assert.equal(texture.format, RGBAFormat);
+      assert.equal((texture.image.data as Uint8Array).length, 4 * 4 * 4);
       assert.equal(texture.magFilter, NearestFilter);
       assert.equal(texture.minFilter, NearestFilter);
       assert.equal(texture.colorSpace, SRGBColorSpace);
@@ -399,6 +412,25 @@ const tests: TestCase[] = [
       // Still exactly one plane in the group; snapshot dims/timestamp follow.
       assert.equal(rootGroup(context).children.filter((c) => c.name === 'costmap').length, 1);
       assert.equal(tool.getSnapshot().costmap?.lastBatchTs, 300);
+      tool.onDetach();
+    },
+  },
+  {
+    name: 'costmap values outside [0,1] clamp to the LUT endpoints (blue for <=0, red for >=1)',
+    run: () => {
+      const context = makeContext();
+      const tool = new DvizPathTool();
+      tool.onAttach(context);
+
+      // Cell 0 = -0.5 → clamped to 0 → LUT[0] blue; cell 1 = 1.7 → clamped to
+      // 1 → LUT[255] red; the other cells stay mid-ramp.
+      tool.onBatch(batch('planner', 'costmap', 100, costmapJson(2, 2, 1, [-0.5, 1.7, 0.5, 0.5])));
+      const data = costmapTextureOf(costmapMeshOf(context)!).image.data as Uint8Array;
+
+      // Texel 0 (value -0.5): pure blue, alpha 255.
+      assert.deepEqual([data[0], data[1], data[2], data[3]], [0, 0, 255, 255]);
+      // Texel 1 (value 1.7): pure red, alpha 255.
+      assert.deepEqual([data[4], data[5], data[6], data[7]], [255, 0, 0, 255]);
       tool.onDetach();
     },
   },

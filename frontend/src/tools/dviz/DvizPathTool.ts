@@ -86,6 +86,9 @@ export function buildCostmapLUT(): Uint8Array {
   return lut;
 }
 
+/** The 256-entry RGB LUT, computed once at module load (768 bytes). */
+const COSTMAP_LUT = buildCostmapLUT();
+
 /** Pure helper: bounding box of flat xyz points → { center, radius }.
  * radius = half-diagonal of the box (covers all points). */
 export function computePathBounds(points: number[]): {
@@ -420,16 +423,19 @@ export class DvizPathTool implements ViewportTool {
     this.costmapResolution = resolution;
     this.costmapLastBatchTs = batch.timestampNs;
 
-    // Cell color = LUT[clamp(value, 0, 1)]; RGB interleaved per cell.
-    const rgb = new Uint8Array(width * height * 3);
-    const lut = buildCostmapLUT();
+    // Cell color = LUT[clamp(value, 0, 1)]; RGBA interleaved per cell. The
+    // texture defaults to RGBAFormat (4 bytes/texel), so every texel carries
+    // an alpha byte of 255 — an RGB-only buffer would stride each texel by 4
+    // bytes and garble the image (1-byte shift per texel + OOB reads).
+    const rgba = new Uint8Array(width * height * 4);
     for (let i = 0; i < values.length; i++) {
       const t = Math.min(1, Math.max(0, values[i]));
       const k = Math.round(t * 255) * 3;
-      const o = i * 3;
-      rgb[o] = lut[k];
-      rgb[o + 1] = lut[k + 1];
-      rgb[o + 2] = lut[k + 2];
+      const o = i * 4;
+      rgba[o] = COSTMAP_LUT[k];
+      rgba[o + 1] = COSTMAP_LUT[k + 1];
+      rgba[o + 2] = COSTMAP_LUT[k + 2];
+      rgba[o + 3] = 255; // opaque
     }
 
     if (
@@ -439,26 +445,28 @@ export class DvizPathTool implements ViewportTool {
     ) {
       // Same dimensions: reuse texture and geometry, refresh the data only.
       // (DataTexture always carries the array we constructed it with.)
-      this.costmapTexture.image.data!.set(rgb);
+      this.costmapTexture.image.data!.set(rgba);
       this.costmapTexture.needsUpdate = true;
     } else {
       // Dimensions changed: drop the old plane and rebuild from scratch.
       this.disposeCostmapResources();
-      this.createCostmapMesh(width, height, resolution, rgb);
+      this.createCostmapMesh(width, height, resolution, rgba);
     }
     this.context?.requestRender();
     this.notify();
   }
 
-  private createCostmapMesh(width: number, height: number, resolution: number, rgb: Uint8Array) {
-    const texture = new DataTexture(rgb, width, height);
+  private createCostmapMesh(width: number, height: number, resolution: number, rgba: Uint8Array) {
+    // Default RGBAFormat matches the 4-bytes-per-texel buffer built per batch.
+    const texture = new DataTexture(rgba, width, height);
     texture.magFilter = NearestFilter; // cell look: no blending between cells
     texture.minFilter = NearestFilter;
     texture.colorSpace = SRGBColorSpace;
     texture.needsUpdate = true;
 
+    // PlaneGeometry already lies flat in the XY plane (normal +Z): the
+    // costmap sits on the XY ground plane, below the z = 0.05 path lines.
     const geometry = new PlaneGeometry(width * resolution, height * resolution);
-    geometry.rotateX(-Math.PI / 2); // lies flat in the XY world plane
 
     const material = new MeshBasicMaterial({
       map: texture,
