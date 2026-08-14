@@ -528,16 +528,17 @@ function toggleTool(id: string, enable: boolean) {
 
 async function updateToolRecommendations(recordingId: string) {
   // A replay-derived update supersedes any in-flight dataflow scan.
-  dataflowRequestSeq++
+  const token = ++dataflowRequestSeq
   try {
     const { streams } = await getRecordingStreams(recordingId)
     const recommendations = findRecommendations(
       toolRegistry.list().map((tool) => ({ id: tool.id, subscribePorts: tool.subscribePorts })),
       streams.map((s) => ({ nodeId: s.nodeId, outputId: s.outputId })),
     )
+    if (token !== dataflowRequestSeq) return
     toolRecommendations.value = recommendations
   } catch {
-    toolRecommendations.value = []
+    if (token === dataflowRequestSeq) toolRecommendations.value = []
   }
 }
 

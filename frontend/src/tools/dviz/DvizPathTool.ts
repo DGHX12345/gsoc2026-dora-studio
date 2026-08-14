@@ -124,7 +124,9 @@ export function computePathBounds(points: number[]): {
   };
 }
 
-/** Replay staleness: no fresh data at the current timeline position. */
+/** Replay staleness: no fresh data at the current timeline position.
+ * 100 ms = 2× the replay frame window (±50 ms) — tuned for the 30 Hz demo;
+ * a real planner publishing below ~10 Hz would need a larger threshold. */
 export function computeStaleness(
   seekTs: number | null,
   batchTs: number,
