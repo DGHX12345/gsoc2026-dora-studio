@@ -201,21 +201,22 @@ function onGhostCount(event: Event) {
 }
 .mp-section-title { font-size: 12px; font-weight: 600; color: var(--text-heading); }
 .mp-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.mp-label { font-size: 13px; color: var(--text-body); }
+.mp-label { font-size: 14px; color: var(--text-heading); }
 .mp-select {
   flex: 1; min-width: 0;
-  padding: 6px 8px; font-size: 13px;
-  background: var(--bg-surface); color: var(--text-body);
+  padding: 6px 8px; font-size: 14px;
+  background: var(--bg-surface); color: var(--text-heading);
   border: 1px solid var(--hairline); border-radius: 6px;
 }
+.mp-select option { background: var(--bg-surface); color: var(--text-heading); }
 .mp-speed { flex: 0 0 auto; }
 .mp-btn {
-  padding: 8px 14px; font-size: 13px; cursor: pointer;
-  background: var(--bg-surface); color: var(--text-body);
+  padding: 8px 14px; font-size: 14px; cursor: pointer;
+  background: var(--bg-surface); color: var(--text-heading);
   border: 1px solid var(--hairline); border-radius: 6px;
 }
 .mp-btn:hover { background: var(--card-hover); color: var(--text-heading); }
-.mp-check { font-size: 13px; color: var(--text-body); display: flex; align-items: center; gap: 6px; }
+.mp-check { font-size: 14px; color: var(--text-heading); display: flex; align-items: center; gap: 6px; }
 .mp-muted { font-size: 12px; color: var(--text-muted-dark); }
 .mp-ee { display: flex; gap: 12px; font-size: 13px; color: var(--text-body); }
 .mp-joints { width: 100%; border-collapse: collapse; }

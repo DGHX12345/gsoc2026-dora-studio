@@ -346,7 +346,10 @@ export class MoveItTool implements ViewportTool {
     this.group = null;
     this.context = null;
     this.notify();
-    this.listeners.clear(); // no stale subscribers across attach cycles
+    // Listeners stay registered: subscribers (panels, the viewport) manage
+    // their own lifecycle, and clearing here broke the detach→reattach
+    // flow (the viewport's nano-visibility subscription went silent after
+    // the first detach). The registry tool instance is a singleton.
   }
 
   private stopPlayerTimer() {

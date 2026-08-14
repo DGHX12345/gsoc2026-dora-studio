@@ -777,36 +777,30 @@ async function loadVisualizationData() {
   isRefreshing.value = false
 }
 
-// M13: hide the Nano display while a tool-mounted robot model (MoveIt
-// B601) is attached and loaded (student decision 2026-08-14).
+// M13: hide the Nano model while the MoveIt tool is attached — the tool
+// owns the viewport then, regardless of its robot load state (student
+// decision 2026-08-14: no nano in the no-model/loading states either).
+// Registry-driven only: attach/detach events are the single trigger, so
+// no tool-level subscription is needed (and none breaks across
+// detach/reattach cycles, since onDetach clears tool listeners).
 const hideNanoForMoveit = ref(false)
-let moveitToolUnsubscribe: (() => void) | null = null
 let registryUnsubscribeNano: (() => void) | null = null
 
 function refreshNanoVisibility() {
-  const tool = toolRegistry.get('moveit-bridge') as MoveItTool | undefined
-  hideNanoForMoveit.value =
-    toolRegistry.statusOf('moveit-bridge') === 'attached' &&
-    tool?.getSnapshot().robotState === 'loaded'
+  hideNanoForMoveit.value = toolRegistry.statusOf('moveit-bridge') === 'attached'
 }
 
 onMounted(() => {
   loadVisualizationData()
   registerBuiltinTools()
   updateRecommendationsFromDataflows()
-  // Registry changes (attach/detach) and tool notifications (robot load
-  // state) both gate the Nano visibility.
   registryUnsubscribeNano = toolRegistry.subscribe(refreshNanoVisibility)
-  moveitToolUnsubscribe =
-    (toolRegistry.get('moveit-bridge') as MoveItTool | undefined)?.subscribe(refreshNanoVisibility) ?? null
   refreshNanoVisibility()
 })
 
 onBeforeUnmount(() => {
   registryUnsubscribeNano?.()
   registryUnsubscribeNano = null
-  moveitToolUnsubscribe?.()
-  moveitToolUnsubscribe = null
   // Tools hold scene objects owned by this viewport instance
   for (const tool of toolRegistry.list()) {
     toolRegistry.detachFromScene(tool.id)
