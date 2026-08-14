@@ -201,22 +201,33 @@ function onGhostCount(event: Event) {
 }
 .mp-section-title { font-size: 12px; font-weight: 600; color: var(--text-heading); }
 .mp-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.mp-label { font-size: 14px; color: var(--text-heading); }
+/* Control text is black-on-gray in the light theme (user feedback
+   2026-08-14: gray backgrounds need black text); the dark theme keeps
+   its light heading color. --text-primary flips per theme. */
+.mp-label { font-size: 14px; color: var(--text-primary); }
 .mp-select {
   flex: 1; min-width: 0;
   padding: 6px 8px; font-size: 14px;
-  background: var(--bg-surface); color: var(--text-heading);
+  background: var(--bg-surface); color: var(--text-primary);
   border: 1px solid var(--hairline); border-radius: 6px;
 }
-.mp-select option { background: var(--bg-surface); color: var(--text-heading); }
+.mp-select option { background: var(--bg-surface); color: var(--text-primary); }
 .mp-speed { flex: 0 0 auto; }
 .mp-btn {
   padding: 8px 14px; font-size: 14px; cursor: pointer;
-  background: var(--bg-surface); color: var(--text-heading);
+  background: var(--bg-surface); color: var(--text-primary);
   border: 1px solid var(--hairline); border-radius: 6px;
 }
-.mp-btn:hover { background: var(--card-hover); color: var(--text-heading); }
-.mp-check { font-size: 14px; color: var(--text-heading); display: flex; align-items: center; gap: 6px; }
+.mp-btn:hover { background: var(--card-hover); }
+.mp-check { font-size: 14px; color: var(--text-primary); display: flex; align-items: center; gap: 6px; }
+
+[data-theme="dark"] .mp-label,
+[data-theme="dark"] .mp-select,
+[data-theme="dark"] .mp-select option,
+[data-theme="dark"] .mp-btn,
+[data-theme="dark"] .mp-check {
+  color: var(--text-heading);
+}
 .mp-muted { font-size: 12px; color: var(--text-muted-dark); }
 .mp-ee { display: flex; gap: 12px; font-size: 13px; color: var(--text-body); }
 .mp-joints { width: 100%; border-collapse: collapse; }
