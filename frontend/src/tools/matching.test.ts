@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 
-import { findRecommendations, matchToolPorts, patternMatches } from './matching';
+import { findRecommendations, matchToolPorts, mergeRecommendations, patternMatches } from './matching';
 import type { PortPattern } from './types';
 
 type TestCase = {
@@ -145,6 +145,74 @@ const tests: TestCase[] = [
       assert.deepEqual(recommendations[0].matchedPorts, [
         port('planner', 'waypoints'),
         port('planner', 'trajectory'),
+      ]);
+    },
+  },
+  {
+    name: 'mergeRecommendations merges two empty lists to an empty list',
+    run: () => {
+      assert.deepEqual(mergeRecommendations([], []), []);
+    },
+  },
+  {
+    name: 'mergeRecommendations with an empty second list returns the first list',
+    run: () => {
+      const a = [{ toolId: 'dviz-path', matchedPorts: [port('planner', 'waypoints')] }];
+
+      assert.deepEqual(mergeRecommendations(a, []), a);
+    },
+  },
+  {
+    name: 'mergeRecommendations with an empty first list returns the second list',
+    run: () => {
+      const b = [{ toolId: 'moveit', matchedPorts: [port('planner', 'trajectory')] }];
+
+      assert.deepEqual(mergeRecommendations([], b), b);
+    },
+  },
+  {
+    name: 'mergeRecommendations dedupes identical ports on overlapping toolIds',
+    run: () => {
+      const a = [{ toolId: 'dviz-path', matchedPorts: [port('planner', 'waypoints'), port('planner', 'trajectory')] }];
+      const b = [{ toolId: 'dviz-path', matchedPorts: [port('planner', 'trajectory'), port('planner', 'waypoints')] }];
+
+      const merged = mergeRecommendations(a, b);
+
+      assert.equal(merged.length, 1);
+      assert.equal(merged[0].toolId, 'dviz-path');
+      // First-list order is preserved, duplicates from b are dropped.
+      assert.deepEqual(merged[0].matchedPorts, [
+        port('planner', 'waypoints'),
+        port('planner', 'trajectory'),
+      ]);
+    },
+  },
+  {
+    name: 'mergeRecommendations appends disjoint toolIds preserving order',
+    run: () => {
+      const a = [{ toolId: 'dviz-path', matchedPorts: [port('planner', 'waypoints')] }];
+      const b = [{ toolId: 'moveit', matchedPorts: [port('planner', 'trajectory')] }];
+
+      const merged = mergeRecommendations(a, b);
+
+      assert.equal(merged.length, 2);
+      assert.deepEqual(merged[0], { toolId: 'dviz-path', matchedPorts: [port('planner', 'waypoints')] });
+      assert.deepEqual(merged[1], { toolId: 'moveit', matchedPorts: [port('planner', 'trajectory')] });
+    },
+  },
+  {
+    name: 'mergeRecommendations keeps ports with the same outputId from different nodes',
+    run: () => {
+      const a = [{ toolId: 'dviz-path', matchedPorts: [port('planner', 'waypoints')] }];
+      const b = [{ toolId: 'dviz-path', matchedPorts: [port('costmap_node', 'waypoints')] }];
+
+      const merged = mergeRecommendations(a, b);
+
+      assert.equal(merged.length, 1);
+      // Same outputId, different nodeId: both ports are kept.
+      assert.deepEqual(merged[0].matchedPorts, [
+        port('planner', 'waypoints'),
+        port('costmap_node', 'waypoints'),
       ]);
     },
   },

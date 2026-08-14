@@ -177,12 +177,12 @@
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
-import { BACKEND_BASE_URL, getDvizDisplays, getDvizSnapshot, getDvizStatus, getDvizTopics, getRecordingStreams, getRobotProfile, openRecording, type ApiResult, type ApiSource, type DvizDisplayResponse, type DvizDisplaysResponse, type DvizSnapshotResponse, type DvizStatusResponse, type DvizTopicResponse, type DvizTopicsResponse, type RobotModuleResponse, type RobotProfileResponse } from '../api'
+import { BACKEND_BASE_URL, getDataflowGraph, getDataflows, getDvizDisplays, getDvizSnapshot, getDvizStatus, getDvizTopics, getRecordingStreams, getRobotProfile, openRecording, type ApiResult, type ApiSource, type DvizDisplayResponse, type DvizDisplaysResponse, type DvizSnapshotResponse, type DvizStatusResponse, type DvizTopicResponse, type DvizTopicsResponse, type RobotModuleResponse, type RobotProfileResponse } from '../api'
 import { buildNanoArmModelResources, createNanoArmJointState } from '../lib/nanoArmModel'
 import { PlaybackEngine } from '../playback'
 import { ReplayScene, type RobotJointState, type RobotBasePose } from '../replay-scene'
 import { createNanoRobotBasePose } from '../lib/nanoRobotMotion'
-import { findRecommendations } from '../tools/matching'
+import { findRecommendations, mergeRecommendations } from '../tools/matching'
 import { toolRegistry } from '../tools/registry'
 import { registerBuiltinTools } from '../tools/index'
 import NanoRobotViewer from './NanoRobotViewer.vue'
@@ -493,7 +493,10 @@ function stopReplay() {
   replayError.value = null
   Object.assign(replayJoints, createNanoArmJointState())
   Object.assign(replayBasePose, { x: 0, y: 0, yaw: 0 })
+  // Clear the replay-derived recommendations, then fall back to any
+  // recommendations derivable from the discovered dataflow graphs.
   toolRecommendations.value = []
+  updateRecommendationsFromDataflows()
 }
 
 // --- M11: tool slot panel ---
@@ -529,6 +532,35 @@ async function updateToolRecommendations(recordingId: string) {
   } catch {
     toolRecommendations.value = []
   }
+}
+
+// M12 D5: recommend tools from discovered dataflow graphs (examples/ scan) so
+// the Tools panel shows matches even without a .drec replay loaded. Fetches
+// every dataflow's graph and merges its (nodeId, outputId) ports into the
+// current recommendations; failures skip that dataflow silently.
+async function updateRecommendationsFromDataflows() {
+  const tools = toolRegistry.list().map((tool) => ({ id: tool.id, subscribePorts: tool.subscribePorts }))
+  let recommendations: ToolRecommendation[] = []
+  try {
+    const { data: dataflows } = await getDataflows([])
+    for (const dataflow of dataflows) {
+      try {
+        const { data: graph } = await getDataflowGraph(dataflow.id, { nodes: [], edges: [], diagnostics: [] })
+        const ports = graph.nodes.flatMap((node) =>
+          node.outputs.map((outputId) => ({ nodeId: node.id, outputId })),
+        )
+        recommendations = mergeRecommendations(
+          recommendations,
+          findRecommendations(tools, ports),
+        )
+      } catch {
+        // Skip this dataflow silently; it may be malformed or unreadable.
+      }
+    }
+  } catch {
+    // No dataflows available; leave recommendations empty.
+  }
+  toolRecommendations.value = recommendations
 }
 
 const backendConnected = computed(() => (
@@ -716,6 +748,7 @@ async function loadVisualizationData() {
 onMounted(() => {
   loadVisualizationData()
   registerBuiltinTools()
+  updateRecommendationsFromDataflows()
 })
 
 onBeforeUnmount(() => {

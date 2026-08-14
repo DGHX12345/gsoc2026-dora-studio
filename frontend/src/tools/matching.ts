@@ -60,3 +60,41 @@ export function findRecommendations(
 
   return recommendations;
 }
+
+/** Merge two recommendation lists: union by toolId, dedupe matchedPorts by
+ * (nodeId, outputId), preserving first-list order then appending new tools. */
+export function mergeRecommendations(
+  a: ToolRecommendation[],
+  b: ToolRecommendation[],
+): ToolRecommendation[] {
+  const merged = new Map<string, ToolRecommendation>();
+  const seenPorts = new Map<string, Set<string>>();
+
+  const addRecommendation = (recommendation: ToolRecommendation) => {
+    const existing = merged.get(recommendation.toolId);
+    if (!existing) {
+      merged.set(recommendation.toolId, {
+        toolId: recommendation.toolId,
+        matchedPorts: [],
+      });
+    }
+    const target = merged.get(recommendation.toolId)!;
+    let seen = seenPorts.get(recommendation.toolId);
+    if (!seen) {
+      seen = new Set<string>();
+      seenPorts.set(recommendation.toolId, seen);
+    }
+    for (const port of recommendation.matchedPorts) {
+      const key = `${port.nodeId}\u0000${port.outputId}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        target.matchedPorts.push(port);
+      }
+    }
+  };
+
+  for (const recommendation of a) addRecommendation(recommendation);
+  for (const recommendation of b) addRecommendation(recommendation);
+
+  return [...merged.values()];
+}

@@ -1,0 +1,17 @@
+# Structural example for the dviz Path Visualization tool (M12 D5).
+# Node scripts are intentionally not included: dora dataflows cannot run in
+# this dev environment (Python 3.10 vs dora 3.11 requirement).
+nodes:
+  - id: planner
+    path: planner.py
+    inputs:
+      costmap: costmap_node/costmap
+    outputs:
+      - waypoints
+      - trajectory
+      - target_point
+
+  - id: costmap_node
+    path: costmap_node.py
+    outputs:
+      - costmap
