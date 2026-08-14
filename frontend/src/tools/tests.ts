@@ -16,3 +16,4 @@ import './moveit/urdf/urdf.test';
 import './moveit/urdf/robot.test';
 import './moveit/urdf/meshes.test';
 import './moveit/collision.test';
+import './moveit/co-visualization.test';
