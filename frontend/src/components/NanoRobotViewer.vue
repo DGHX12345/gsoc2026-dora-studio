@@ -84,6 +84,10 @@ const props = defineProps<{
   jointValues: NanoArmJointState
   basePose: NanoRobotBasePose
   viewerLabel: string
+  /** M13: hide only the robot MODEL while tool-mounted models (B601)
+   * take over the viewport — the canvas/scene/camera stay alive for the
+   * tools. Hiding the whole viewer would black out the tool rendering. */
+  modelVisible?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -595,6 +599,7 @@ async function loadAndRenderModel() {
 
   modelRoot = new THREE.Group()
   modelRoot.name = 'nano-full-root'
+  modelRoot.visible = props.modelVisible ?? true
   scene.add(modelRoot)
 
   for (const rootBody of model.rootBodies) {
@@ -628,6 +633,14 @@ watch(
     requestRender()
   },
   { deep: true },
+)
+
+watch(
+  () => props.modelVisible,
+  () => {
+    if (modelRoot) modelRoot.visible = props.modelVisible ?? true
+    requestRender()
+  },
 )
 
 onMounted(async () => {

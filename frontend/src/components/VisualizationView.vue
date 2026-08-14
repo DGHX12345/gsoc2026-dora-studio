@@ -118,12 +118,17 @@
 
       <!-- 3D Viewer fills remaining space -->
       <div class="viz-robot-viewer-card">
+        <!-- M13: a tool-mounted robot model (MoveIt B601) replaces the Nano
+             MODEL while attached+loaded; the viewer canvas stays alive (the
+             tools render into its scene). Hiding the whole viewer would
+             black out the tool rendering too. -->
         <NanoRobotViewer
           ref="nanoViewer"
           :xml-url="nanoArmResources.xmlUrl"
           :asset-base-url="nanoArmResources.assetBaseUrl"
           :joint-values="effectiveJointState"
           :base-pose="effectiveBasePose"
+          :model-visible="!hideNanoForMoveit"
           viewer-label="Nano RobotModel"
         />
 
@@ -772,13 +777,36 @@ async function loadVisualizationData() {
   isRefreshing.value = false
 }
 
+// M13: hide the Nano display while a tool-mounted robot model (MoveIt
+// B601) is attached and loaded (student decision 2026-08-14).
+const hideNanoForMoveit = ref(false)
+let moveitToolUnsubscribe: (() => void) | null = null
+let registryUnsubscribeNano: (() => void) | null = null
+
+function refreshNanoVisibility() {
+  const tool = toolRegistry.get('moveit-bridge') as MoveItTool | undefined
+  hideNanoForMoveit.value =
+    toolRegistry.statusOf('moveit-bridge') === 'attached' &&
+    tool?.getSnapshot().robotState === 'loaded'
+}
+
 onMounted(() => {
   loadVisualizationData()
   registerBuiltinTools()
   updateRecommendationsFromDataflows()
+  // Registry changes (attach/detach) and tool notifications (robot load
+  // state) both gate the Nano visibility.
+  registryUnsubscribeNano = toolRegistry.subscribe(refreshNanoVisibility)
+  moveitToolUnsubscribe =
+    (toolRegistry.get('moveit-bridge') as MoveItTool | undefined)?.subscribe(refreshNanoVisibility) ?? null
+  refreshNanoVisibility()
 })
 
 onBeforeUnmount(() => {
+  registryUnsubscribeNano?.()
+  registryUnsubscribeNano = null
+  moveitToolUnsubscribe?.()
+  moveitToolUnsubscribe = null
   // Tools hold scene objects owned by this viewport instance
   for (const tool of toolRegistry.list()) {
     toolRegistry.detachFromScene(tool.id)
