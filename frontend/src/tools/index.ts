@@ -3,6 +3,7 @@
 
 import WaypointEchoPanel from './demo/WaypointEchoPanel.vue';
 import { WaypointEchoTool } from './demo/WaypointEchoTool';
+import DvizPathPanel from './dviz/DvizPathPanel.vue';
 import { DvizPathTool } from './dviz/DvizPathTool';
 import { toolRegistry } from './registry';
 
@@ -12,8 +13,9 @@ export function registerBuiltinTools() {
     echo.panelComponent = WaypointEchoPanel;
     toolRegistry.register(echo);
   }
-  // The D4 panel task binds panelComponent; core rendering needs none.
   if (!toolRegistry.get('dviz-path')) {
-    toolRegistry.register(new DvizPathTool());
+    const dviz = new DvizPathTool();
+    dviz.panelComponent = DvizPathPanel;
+    toolRegistry.register(dviz);
   }
 }

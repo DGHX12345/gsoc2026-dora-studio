@@ -82,6 +82,20 @@ type Messages = {
     categoryPlanning: string
     controls: string
     controlsHint: string
+    dviz: {
+      hint: string
+      points: string
+      alternative: string
+      stale: string
+      show: string
+      hide: string
+      snap: string
+      target: string
+      costmapTitle: string
+      costmapVisible: string
+      cells: string
+      perCell: string
+    }
   }
   monitoring: {
     title: string
@@ -183,6 +197,20 @@ const messages: Record<Locale, Messages> = {
       categoryPlanning: '规划',
       controls: '控制面板',
       controlsHint: '挂载后展开此面板查看工具控制项',
+      dviz: {
+        hint: '暂无路径数据——加载工具演示 .drec 并开始回放',
+        points: '个点',
+        alternative: '备选',
+        stale: '过期',
+        show: '显示',
+        hide: '隐藏',
+        snap: '聚焦',
+        target: '目标点',
+        costmapTitle: '代价地图',
+        costmapVisible: '显示',
+        cells: '格',
+        perCell: 'm/格',
+      },
     },
     monitoring: {
       title: '监测',
@@ -282,6 +310,20 @@ const messages: Record<Locale, Messages> = {
       categoryPlanning: 'Planning',
       controls: 'Control panel',
       controlsHint: 'Attach the tool to expand its controls',
+      dviz: {
+        hint: 'No path data yet — load the tool demo .drec and start replay',
+        points: 'points',
+        alternative: 'alternative',
+        stale: 'stale',
+        show: 'Show',
+        hide: 'Hide',
+        snap: 'Focus',
+        target: 'Target',
+        costmapTitle: 'Costmap',
+        costmapVisible: 'Show',
+        cells: 'cells',
+        perCell: 'm/cell',
+      },
     },
     monitoring: {
       title: 'Monitoring',

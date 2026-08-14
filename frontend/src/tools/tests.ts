@@ -5,6 +5,7 @@ import './tf.test';
 import './matching.test';
 import './registry.test';
 import './feed.test';
-import './dviz/parse.test';
 import './dviz/DvizPathTool.test';
+import './dviz/format.test';
+import './dviz/parse.test';
 import './demo/WaypointEchoTool.test';
