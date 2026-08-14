@@ -1,7 +1,7 @@
 <template>
   <div class="dviz-panel">
     <template v-if="snapshot">
-      <p v-if="snapshot.paths.length === 0 && !snapshot.costmap" class="dviz-hint">
+      <p v-if="snapshot.paths.length === 0 && !snapshot.costmap && !snapshot.target" class="dviz-hint">
         {{ t.tools.dviz.hint }}
       </p>
 
@@ -117,7 +117,7 @@ onBeforeUnmount(() => {
 const opacityPercent = computed(() =>
   Math.round((snapshot.value?.costmap?.opacity ?? 0) * 100),
 );
-const opacityLabel = computed(() => `${t.value.tools.dviz.costmapTitle} ${opacityPercent.value}%`);
+const opacityLabel = computed(() => `${opacityPercent.value}%`);
 
 /** #rrggbb from a numeric color (e.g. 0x22d3ee). */
 function colorCss(hex: number) {
@@ -216,7 +216,7 @@ function fmtResolution(v: number) {
 }
 .dviz-btn {
   flex: 1;
-  padding: 8px 12px;
+  padding: 10px 12px;
   font-size: 13px;
   background: var(--card-surface);
   color: var(--text-body);
@@ -280,7 +280,7 @@ function fmtResolution(v: number) {
 }
 .dviz-opacity input[type='range'] {
   width: 100%;
-  height: 6px;
+  height: 10px;
   accent-color: var(--accent-cyan);
   cursor: pointer;
 }
