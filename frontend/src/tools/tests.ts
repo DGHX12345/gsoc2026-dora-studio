@@ -8,4 +8,3 @@ import './feed.test';
 import './dviz/DvizPathTool.test';
 import './dviz/format.test';
 import './dviz/parse.test';
-import './demo/WaypointEchoTool.test';
