@@ -8,6 +8,7 @@ mod drec;
 mod external;
 mod lerobot;
 mod metrics;
+mod model_catalog;
 mod monitoring;
 mod models;
 mod otel;
@@ -83,7 +84,8 @@ async fn main() {
     let _ = tokio::time::timeout(std::time::Duration::from_secs(3), ws_connect_handle).await;
     let models_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../models");
     let app = Router::new()
-        .nest_service("/models", ServeDir::new(models_dir))
+        .nest_service("/models", ServeDir::new(models_dir.clone()))
+        .route("/api/models", get(available_models))
         .route("/api/health", get(health))
         .route("/api/system/status", get(system_status))
         .route("/api/dataflows", get(dataflows))
@@ -227,6 +229,22 @@ async fn coordinator_status() -> Json<models::CoordinatorStatus> {
 
 async fn dviz_status() -> Json<models::DvizStatus> {
     Json(external::query_dviz())
+}
+
+/// M13 D6: locally available robot models (URDF directories under
+/// models/) for the tool panel's model selector.
+async fn available_models() -> Json<models::AvailableModelsResponse> {
+    let models_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../models");
+    Json(models::AvailableModelsResponse {
+        models: model_catalog::list_available_models(&models_dir)
+            .into_iter()
+            .map(|m| models::AvailableModel {
+                id: m.id,
+                urdf_path: m.urdf_path,
+                mesh_base_path: m.mesh_base_path,
+            })
+            .collect(),
+    })
 }
 
 async fn dviz_topics() -> Json<models::DvizTopicsResponse> {

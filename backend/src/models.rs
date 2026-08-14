@@ -108,6 +108,22 @@ pub struct RobotProfileResponse {
     pub profile: RobotProfile,
 }
 
+// --- available robot models (M13 D6) ---
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AvailableModel {
+    pub id: String,
+    pub urdf_path: String,
+    pub mesh_base_path: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AvailableModelsResponse {
+    pub models: Vec<AvailableModel>,
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RobotProfile {

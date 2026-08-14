@@ -96,6 +96,31 @@ type Messages = {
       cells: string
       perCell: string
     }
+    moveit: {
+      model: string
+      noModel: string
+      state_loading: string
+      state_loaded: string
+      state_unavailable: string
+      player: string
+      play: string
+      pause: string
+      stepBack: string
+      stepForward: string
+      syncToTimeline: string
+      stale: string
+      endEffector: string
+      joints: string
+      collisionScene: string
+      showWireframes: string
+      collisions: string
+      ghosts: string
+      status: string
+      planOk: string
+      planFail: string
+      execution: string
+      idle: string
+    }
   }
   monitoring: {
     title: string
@@ -211,6 +236,31 @@ const messages: Record<Locale, Messages> = {
         cells: '格',
         perCell: 'm/格',
       },
+      moveit: {
+        model: '机器人模型',
+        noModel: '无模型（坐标图回退）',
+        state_loading: '加载中',
+        state_loaded: '已加载',
+        state_unavailable: '不可用',
+        player: '轨迹播放器',
+        play: '播放',
+        pause: '暂停',
+        stepBack: '上一路径点',
+        stepForward: '下一路径点',
+        syncToTimeline: '同步时间轴',
+        stale: '数据过期',
+        endEffector: '末端执行器位置',
+        joints: '关节角度表',
+        collisionScene: '碰撞场景',
+        showWireframes: '显示线框',
+        collisions: '碰撞对',
+        ghosts: '幽灵姿态数',
+        status: '规划与执行状态',
+        planOk: '规划成功',
+        planFail: '规划失败',
+        execution: '执行进度',
+        idle: '空闲',
+      },
     },
     monitoring: {
       title: '监测',
@@ -323,6 +373,31 @@ const messages: Record<Locale, Messages> = {
         costmapVisible: 'Show',
         cells: 'cells',
         perCell: 'm/cell',
+      },
+      moveit: {
+        model: 'Robot model',
+        noModel: 'No model (chart fallback)',
+        state_loading: 'loading',
+        state_loaded: 'loaded',
+        state_unavailable: 'unavailable',
+        player: 'Trajectory player',
+        play: 'Play',
+        pause: 'Pause',
+        stepBack: 'Previous waypoint',
+        stepForward: 'Next waypoint',
+        syncToTimeline: 'Sync to timeline',
+        stale: 'stale data',
+        endEffector: 'End effector position',
+        joints: 'Joint angle table',
+        collisionScene: 'Collision scene',
+        showWireframes: 'Show wireframes',
+        collisions: 'Collision pairs',
+        ghosts: 'Ghost pose count',
+        status: 'Plan & execution status',
+        planOk: 'plan succeeded',
+        planFail: 'plan failed',
+        execution: 'Execution progress',
+        idle: 'idle',
       },
     },
     monitoring: {

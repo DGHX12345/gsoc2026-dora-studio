@@ -63,6 +63,8 @@ const GRIPPER_URDF = `
 </robot>`;
 
 const chainLoader: ModelLoader = async () => buildRobotModel(parseUrdf(CHAIN_URDF));
+// Stub catalog so the auto-load never touches the network in tests.
+const stubCatalog = async () => [{ id: 'b601', urdfPath: '/models/b601/x.urdf', meshBasePath: '/models/b601/' }];
 
 type TestCase = {
   name: string;
@@ -108,7 +110,7 @@ const tests: TestCase[] = [
   {
     name: 'subscribePorts match all six moveit ports and reject unrelated ones',
     run: () => {
-      const tool = new MoveItTool(chainLoader);
+      const tool = new MoveItTool(chainLoader, stubCatalog);
       for (const output of ['trajectory', 'joint_positions', 'joint_commands', 'scene_update', 'execution_status', 'plan_status']) {
         assert.ok(matchToolPorts(tool.subscribePorts, 'planner', output), output);
         assert.ok(matchToolPorts(tool.subscribePorts, 'mujoco_sim', output), output);
@@ -120,7 +122,7 @@ const tests: TestCase[] = [
   {
     name: 'a trajectory batch renders a parallel-coordinates chart in the scene',
     run: () => {
-      const tool = new MoveItTool(chainLoader);
+      const tool = new MoveItTool(chainLoader, stubCatalog);
       const context = makeContext();
       tool.onAttach(context);
       tool.onBatch(batch('planner', 'trajectory', 1_000, json(TRAJECTORY_ENVELOPE)));
@@ -140,7 +142,7 @@ const tests: TestCase[] = [
   {
     name: 'flat trajectory batches are ignored until a joint count is known',
     run: () => {
-      const tool = new MoveItTool(chainLoader);
+      const tool = new MoveItTool(chainLoader, stubCatalog);
       const context = makeContext();
       tool.onAttach(context);
       tool.onBatch(batch('planner', 'trajectory', 1_000, f32([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12])));
@@ -159,7 +161,7 @@ const tests: TestCase[] = [
   {
     name: 'plan/execution status and joint streams update the snapshot; invalid payloads keep the last value',
     run: () => {
-      const tool = new MoveItTool(chainLoader);
+      const tool = new MoveItTool(chainLoader, stubCatalog);
       tool.onAttach(makeContext());
       tool.onBatch(batch('planner', 'plan_status', 1_000, json({ success: true, message: 'ok', num_waypoints: 3 })));
       tool.onBatch(
@@ -188,7 +190,7 @@ const tests: TestCase[] = [
   {
     name: 'stale flags follow the timeline seek position',
     run: () => {
-      const tool = new MoveItTool(chainLoader);
+      const tool = new MoveItTool(chainLoader, stubCatalog);
       tool.onAttach(makeContext());
       tool.onBatch(batch('planner', 'trajectory', 1_000, json(TRAJECTORY_ENVELOPE)));
       tool.onBatch(batch('trajectory_executor', 'execution_status', 1_000, json({ is_executing: false, current_waypoint: 0, progress: 0 })));
@@ -205,7 +207,7 @@ const tests: TestCase[] = [
   {
     name: 'setRobot updates the joint labels in the snapshot',
     run: () => {
-      const tool = new MoveItTool(chainLoader);
+      const tool = new MoveItTool(chainLoader, stubCatalog);
       tool.onAttach(makeContext());
       assert.deepEqual(tool.getSnapshot().jointLabels, []);
       tool.setRobot('b601');
@@ -219,7 +221,7 @@ const tests: TestCase[] = [
   {
     name: 'subscribe notifies on batch updates and unsubscribes cleanly',
     run: () => {
-      const tool = new MoveItTool(chainLoader);
+      const tool = new MoveItTool(chainLoader, stubCatalog);
       tool.onAttach(makeContext());
       let notified = 0;
       const unsubscribe = tool.subscribe(() => {
@@ -239,7 +241,7 @@ const tests: TestCase[] = [
       // (positive x) and was invisible in the viewport. NanoRobotViewer's
       // frameCameraToModel frames a small model: camera at
       // (r*1.75, -r*2.15, r*1.1) looking at the origin, 35° FOV.
-      const tool = new MoveItTool(chainLoader);
+      const tool = new MoveItTool(chainLoader, stubCatalog);
       const context = makeContext();
       tool.onAttach(context);
       tool.onBatch(batch('planner', 'trajectory', 1_000, json(TRAJECTORY_ENVELOPE)));
@@ -273,7 +275,7 @@ const tests: TestCase[] = [
       const tool = new MoveItTool(async (robotId) => {
         loadedRobot = robotId;
         return buildRobotModel(parseUrdf(CHAIN_URDF));
-      });
+      }, stubCatalog);
       const context = makeContext();
       tool.onAttach(context);
       await flush();
@@ -306,7 +308,7 @@ const tests: TestCase[] = [
     run: async () => {
       const tool = new MoveItTool(async () => {
         throw new Error('model not found');
-      });
+      }, stubCatalog);
       const context = makeContext();
       tool.onAttach(context);
       await flush();
@@ -336,7 +338,7 @@ const tests: TestCase[] = [
         });
       });
 
-      const tool = new MoveItTool(async () => model);
+      const tool = new MoveItTool(async () => model, stubCatalog);
       tool.onAttach(makeContext());
       await flush();
       // Two trajectory batches: the second rebuilds ghosts
@@ -348,7 +350,7 @@ const tests: TestCase[] = [
   {
     name: 'identical trajectory batches skip the FK rebuild',
     run: async () => {
-      const tool = new MoveItTool(chainLoader);
+      const tool = new MoveItTool(chainLoader, stubCatalog);
       const context = makeContext();
       tool.onAttach(context);
       await flush();
@@ -374,7 +376,7 @@ const tests: TestCase[] = [
   {
     name: 'scene_update batches render yellow wireframes and report collisions',
     run: async () => {
-      const tool = new MoveItTool(chainLoader);
+      const tool = new MoveItTool(chainLoader, stubCatalog);
       const context = makeContext();
       tool.onAttach(context);
       await flush();
@@ -409,7 +411,7 @@ const tests: TestCase[] = [
   {
     name: 'attached scene objects parent under their robot link',
     run: async () => {
-      const tool = new MoveItTool(chainLoader);
+      const tool = new MoveItTool(chainLoader, stubCatalog);
       const context = makeContext();
       tool.onAttach(context);
       await flush();
@@ -439,7 +441,7 @@ const tests: TestCase[] = [
   {
     name: 'identical scene versions skip the overlay rebuild',
     run: async () => {
-      const tool = new MoveItTool(chainLoader);
+      const tool = new MoveItTool(chainLoader, stubCatalog);
       const context = makeContext();
       tool.onAttach(context);
       await flush();
@@ -462,7 +464,7 @@ const tests: TestCase[] = [
   {
     name: 'joint_positions batches drive the current pose of the loaded robot',
     run: async () => {
-      const tool = new MoveItTool(chainLoader);
+      const tool = new MoveItTool(chainLoader, stubCatalog);
       const context = makeContext();
       tool.onAttach(context);
       await flush();
@@ -479,7 +481,7 @@ const tests: TestCase[] = [
   {
     name: 'previewPose maps arm radians and converts the gripper degrees-linear to meters',
     run: async () => {
-      const tool = new MoveItTool(async () => buildRobotModel(parseUrdf(GRIPPER_URDF)));
+      const tool = new MoveItTool(async () => buildRobotModel(parseUrdf(GRIPPER_URDF)), stubCatalog);
       tool.onAttach(makeContext());
       await flush();
       // 56.8° full range (student decision) → 0.991 rad; half → 0.03575 m.
@@ -503,9 +505,143 @@ const tests: TestCase[] = [
     },
   },
   {
+    name: 'trajectory player advances waypoints, drives the pose, and stops at the end',
+    run: async () => {
+      const tool = new MoveItTool(chainLoader, stubCatalog);
+      tool.onAttach(makeContext());
+      await flush();
+      tool.onBatch(batch('planner', 'trajectory', 1_000, json(TRAJECTORY_ENVELOPE)));
+
+      tool.setTrajectoryPlayback({ playing: true, speed: 1 });
+      let snapshot = tool.getSnapshot();
+      assert.equal(snapshot.player.playing, true);
+      assert.equal(snapshot.player.syncToTimeline, false);
+      assert.equal(snapshot.player.waypointIndex, 0);
+
+      tool.advancePlayer();
+      snapshot = tool.getSnapshot();
+      assert.equal(snapshot.player.waypointIndex, 1);
+      assert.deepEqual(snapshot.currentJointValues, TRAJECTORY_ENVELOPE.waypoints[1]);
+
+      tool.advancePlayer();
+      tool.advancePlayer();
+      snapshot = tool.getSnapshot();
+      assert.equal(snapshot.player.waypointIndex, 2);
+      assert.equal(snapshot.player.playing, false, 'stops at the last waypoint');
+    },
+  },
+  {
+    name: 'stepTrajectory moves one waypoint without starting playback',
+    run: async () => {
+      const tool = new MoveItTool(chainLoader, stubCatalog);
+      tool.onAttach(makeContext());
+      await flush();
+      tool.onBatch(batch('planner', 'trajectory', 1_000, json(TRAJECTORY_ENVELOPE)));
+      tool.stepTrajectory(1);
+      assert.equal(tool.getSnapshot().player.waypointIndex, 1);
+      assert.equal(tool.getSnapshot().player.playing, false);
+      tool.stepTrajectory(1);
+      tool.stepTrajectory(1);
+      assert.equal(tool.getSnapshot().player.waypointIndex, 2, 'clamped at the last waypoint');
+      tool.stepTrajectory(-1);
+      assert.equal(tool.getSnapshot().player.waypointIndex, 1);
+      tool.stepTrajectory(-1);
+      tool.stepTrajectory(-1);
+      assert.equal(tool.getSnapshot().player.waypointIndex, 0, 'clamped at zero');
+    },
+  },
+  {
+    name: 'sync-to-timeline mode pauses the player and restores stream-driven poses',
+    run: async () => {
+      const tool = new MoveItTool(chainLoader, stubCatalog);
+      tool.onAttach(makeContext());
+      await flush();
+      tool.onBatch(batch('planner', 'trajectory', 1_000, json(TRAJECTORY_ENVELOPE)));
+      tool.setTrajectoryPlayback({ playing: true });
+      tool.advancePlayer(); // pose = waypoint 1
+      // Joint streams must not override the player pose while playing
+      tool.onBatch(batch('mujoco_sim', 'joint_positions', 1_000, json([0.9, 0, 0])));
+      assert.deepEqual(tool.getSnapshot().currentJointValues, TRAJECTORY_ENVELOPE.waypoints[1]);
+
+      tool.setSyncToTimeline(true);
+      const snapshot = tool.getSnapshot();
+      assert.equal(snapshot.player.syncToTimeline, true);
+      assert.equal(snapshot.player.playing, false);
+      // Streams own the pose again
+      tool.onBatch(batch('mujoco_sim', 'joint_positions', 2_000, json([0.7, 0, 0])));
+      assert.deepEqual(tool.getSnapshot().currentJointValues, [0.7, 0, 0]);
+    },
+  },
+  {
+    name: 'setGhostCount rebuilds ghosts within 1..20',
+    run: async () => {
+      const tool = new MoveItTool(chainLoader, stubCatalog);
+      const context = makeContext();
+      tool.onAttach(context);
+      await flush();
+      tool.onBatch(batch('planner', 'trajectory', 1_000, json(TRAJECTORY_ENVELOPE)));
+      const ghosts = () =>
+        (rootGroup(context)!.children.find((c) => c.name === 'moveit-ghosts') as Group).children.length;
+      assert.equal(ghosts(), 5);
+      tool.setGhostCount(3);
+      assert.equal(ghosts(), 3);
+      tool.setGhostCount(25);
+      assert.equal(ghosts(), 20, 'clamped to 20');
+      tool.setGhostCount(0);
+      assert.equal(ghosts(), 1, 'clamped to 1');
+    },
+  },
+  {
+    name: 'setCollisionVisible toggles the scene overlay',
+    run: async () => {
+      const tool = new MoveItTool(chainLoader, stubCatalog);
+      const context = makeContext();
+      tool.onAttach(context);
+      await flush();
+      tool.onBatch(
+        batch(
+          'planning_scene',
+          'scene_update',
+          1_000,
+          json({
+            version: 1,
+            world_objects: [
+              { name: 'a', type: 'sphere', position: [0, 0, 0], dimensions: [0.3], color: [1, 1, 0, 1] },
+            ],
+            attached_objects: [],
+            robot_state: { joint_positions: [], gripper_state: 0 },
+          }),
+        ),
+      );
+      const collision = rootGroup(context)!.children.find((c) => c.name === 'moveit-collision') as Group;
+      assert.equal(collision.visible, true);
+      tool.setCollisionVisible(false);
+      assert.equal(collision.visible, false);
+      assert.equal(tool.getSnapshot().collisionVisible, false);
+    },
+  },
+  {
+    name: 'unloadRobot falls back to the chart and restores the nano display contract',
+    run: async () => {
+      const tool = new MoveItTool(chainLoader, stubCatalog);
+      const context = makeContext();
+      tool.onAttach(context);
+      await flush();
+      assert.equal(tool.getSnapshot().robotState, 'loaded');
+      tool.unloadRobot();
+      const snapshot = tool.getSnapshot();
+      assert.equal(snapshot.robotState, null);
+      assert.equal(rootGroup(context)!.children.find((c) => c.name === 'moveit-robot'), undefined);
+      tool.onBatch(batch('planner', 'trajectory', 1_000, json(TRAJECTORY_ENVELOPE)));
+      const chart = chartGroup(context);
+      assert.ok(chart);
+      assert.equal(chart.visible, true);
+    },
+  },
+  {
     name: 'detach removes the group and clears all state',
     run: () => {
-      const tool = new MoveItTool(chainLoader);
+      const tool = new MoveItTool(chainLoader, stubCatalog);
       const context = makeContext();
       tool.onAttach(context);
       tool.setRobot('ur5e');

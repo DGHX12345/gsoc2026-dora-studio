@@ -78,38 +78,44 @@ const GHOST_OPACITY = 0.35;
  * value linearly from this range to the URDF prismatic limit. */
 const GRIPPER_FULL_RANGE_RAD = (56.8 * Math.PI) / 180;
 
-/** Robots with a locally available URDF, served by the backend /models
- * static route (models/ is gitignored, Nano precedent). Paths resolve
- * against the backend origin at load time — the Vite dev server has no
- * /models proxy (Nano precedent). */
-export const AVAILABLE_MODELS = [
-  {
-    robotId: 'b601',
-    label: 'reBot B601 (Seeed)',
-    urdfPath: '/models/b601/reBot_B601_DM_with_gripper.urdf',
-    meshBasePath: '/models/b601/',
-  },
-] as const;
+export interface ModelCatalogEntry {
+  id: string;
+  urdfPath: string;
+  meshBasePath: string;
+}
 
 export type ModelLoader = (robotId: string) => Promise<RobotModel>;
 
-function defaultModelLoader(robotId: string): Promise<RobotModel> {
-  const entry = AVAILABLE_MODELS.find((model) => model.robotId === robotId);
-  if (!entry) return Promise.reject(new Error(`no local URDF for robot "${robotId}"`));
-  const urdfUrl = `${BACKEND_BASE_URL}${entry.urdfPath}`;
-  const meshBaseUrl = `${BACKEND_BASE_URL}${entry.meshBasePath}`;
-  return fetch(urdfUrl)
+/** Robot models available under backend `models/` (GET /api/models, M13
+ * D6) — drop a URDF directory in and it shows up, no code change. */
+export function fetchModelCatalog(): Promise<ModelCatalogEntry[]> {
+  return fetch(`${BACKEND_BASE_URL}/api/models`)
     .then((response) => {
-      if (!response.ok) throw new Error(`URDF fetch failed: ${response.status}`);
-      return response.text();
+      if (!response.ok) throw new Error(`model catalog fetch failed: ${response.status}`);
+      return response.json() as Promise<{ models: ModelCatalogEntry[] }>;
     })
-    .then((urdfText) =>
-      loadUrdfRobot(urdfText, async (relativePath) => {
-        const response = await fetch(`${meshBaseUrl}${relativePath}`);
-        if (!response.ok) throw new Error(`mesh fetch failed: ${response.status}`);
-        return response.arrayBuffer();
-      }),
-    );
+    .then((catalog) => catalog.models);
+}
+
+function defaultModelLoader(robotId: string): Promise<RobotModel> {
+  return fetchModelCatalog().then((catalog) => {
+    const entry = catalog.find((model) => model.id === robotId);
+    if (!entry) return Promise.reject(new Error(`no local URDF for robot "${robotId}"`));
+    const urdfUrl = `${BACKEND_BASE_URL}${entry.urdfPath}`;
+    const meshBaseUrl = `${BACKEND_BASE_URL}${entry.meshBasePath}`;
+    return fetch(urdfUrl)
+      .then((response) => {
+        if (!response.ok) throw new Error(`URDF fetch failed: ${response.status}`);
+        return response.text();
+      })
+      .then((urdfText) =>
+        loadUrdfRobot(urdfText, async (relativePath) => {
+          const response = await fetch(`${meshBaseUrl}${relativePath}`);
+          if (!response.ok) throw new Error(`mesh fetch failed: ${response.status}`);
+          return response.arrayBuffer();
+        }),
+      );
+  });
 }
 
 export type RobotState = 'loading' | 'loaded' | 'unavailable';
@@ -121,6 +127,8 @@ export interface MoveItSnapshot {
   jointLabels: string[];
   numJoints: number | null;
   endEffector: { x: number; y: number; z: number } | null;
+  /** The pose currently applied to the model (player or stream driven). */
+  currentJointValues: number[] | null;
   trajectory: {
     nodeId: string;
     waypointCount: number;
@@ -133,6 +141,15 @@ export interface MoveItSnapshot {
   jointPositions: { values: number[]; lastBatchTs: number } | null;
   scene: { data: PlanningScene; lastBatchTs: number } | null;
   sceneCollisions: { a: string; b: string; distance: number }[];
+  collisionVisible: boolean;
+  ghostCount: number;
+  player: {
+    playing: boolean;
+    speed: number;
+    syncToTimeline: boolean;
+    waypointIndex: number;
+    waypointCount: number;
+  };
   lastSeekTs: number | null;
 }
 
@@ -187,6 +204,16 @@ export class MoveItTool implements ViewportTool {
   private attachedWires: LineSegments[] = [];
   private sceneCollisions: CollisionPair[] = [];
   private lastSceneVersion: number | null = null;
+  private collisionVisible = true;
+  private ghostCount = DEFAULT_GHOST_COUNT;
+
+  // D6 trajectory player (independent of the replay timeline)
+  private playerPlaying = false;
+  private playerSpeed = 1;
+  private playerIndex = 0;
+  private syncToTimeline = true;
+  private playerTimer: ReturnType<typeof setInterval> | null = null;
+  private lastPoseValues: number[] | null = null;
 
   // Parallel-coordinates chart resources (D2 fallback visualization)
   private chartGroup: Group | null = null;
@@ -195,7 +222,10 @@ export class MoveItTool implements ViewportTool {
   private axisMaterial: LineBasicMaterial | null = null;
   private polylineMaterials: LineBasicMaterial[] = [];
 
-  constructor(modelLoader: ModelLoader = defaultModelLoader) {
+  constructor(
+    modelLoader: ModelLoader = defaultModelLoader,
+    private readonly catalogFetcher: () => Promise<ModelCatalogEntry[]> = fetchModelCatalog,
+  ) {
     this.modelLoader = modelLoader;
   }
 
@@ -209,9 +239,27 @@ export class MoveItTool implements ViewportTool {
     this.attachEpoch += 1;
     context.requestRender();
 
-    // Auto-load the single locally available robot; D6 adds the selector.
-    const first = AVAILABLE_MODELS[0];
-    if (first) void this.loadRobot(first.robotId);
+    // Auto-load the first locally discovered robot; the D6 selector can
+    // switch models or unload.
+    void this.loadFirstAvailableModel();
+  }
+
+  private async loadFirstAvailableModel() {
+    const epoch = this.attachEpoch;
+    try {
+      const catalog = await this.catalogFetcher();
+      if (epoch !== this.attachEpoch) return;
+      if (catalog.length > 0) {
+        await this.loadRobot(catalog[0].id);
+      } else {
+        this.robotState = 'unavailable'; // honest: no local models
+        this.notify();
+      }
+    } catch {
+      if (epoch !== this.attachEpoch) return;
+      this.robotState = 'unavailable';
+      this.notify();
+    }
   }
 
   onBatch(batch: ToolBatch, _tf?: TfTree) {
@@ -287,10 +335,25 @@ export class MoveItTool implements ViewportTool {
     this.robotId = null;
     this.numJoints = null;
     this.lastSeekTs = null;
+    this.stopPlayerTimer();
+    this.playerPlaying = false;
+    this.playerSpeed = 1;
+    this.playerIndex = 0;
+    this.syncToTimeline = true;
+    this.ghostCount = DEFAULT_GHOST_COUNT;
+    this.collisionVisible = true;
+    this.lastPoseValues = null;
     this.group = null;
     this.context = null;
     this.notify();
     this.listeners.clear(); // no stale subscribers across attach cycles
+  }
+
+  private stopPlayerTimer() {
+    if (this.playerTimer !== null) {
+      clearInterval(this.playerTimer);
+      this.playerTimer = null;
+    }
   }
 
   subscribe(listener: () => void): () => void {
@@ -333,6 +396,16 @@ export class MoveItTool implements ViewportTool {
       jointPositions: this.jointPositions ? { ...this.jointPositions } : null,
       scene: this.scene ? { ...this.scene } : null,
       sceneCollisions: [...this.sceneCollisions],
+      collisionVisible: this.collisionVisible,
+      ghostCount: this.ghostCount,
+      currentJointValues: this.lastPoseValues ? [...this.lastPoseValues] : null,
+      player: {
+        playing: this.playerPlaying,
+        speed: this.playerSpeed,
+        syncToTimeline: this.syncToTimeline,
+        waypointIndex: this.playerIndex,
+        waypointCount: this.trajectory?.waypoints.length ?? 0,
+      },
       lastSeekTs: this.lastSeekTs,
     };
   }
@@ -350,6 +423,90 @@ export class MoveItTool implements ViewportTool {
 
   getRobotModel(): RobotModel | null {
     return this.robotModel;
+  }
+
+  /** D6 panel: unload the robot model — the joint-space chart becomes the
+   * visualization again (and the viewport restores the Nano display). */
+  unloadRobot() {
+    this.stopPlayerTimer();
+    this.disposeRobot();
+    this.robotId = null;
+    this.numJoints = null;
+    this.trajectorySignature = null;
+    this.notify();
+  }
+
+  /** D6 panel: play/pause the trajectory player (independent of the
+   * replay timeline). Starting playback switches off timeline sync. */
+  setTrajectoryPlayback(opts: { playing: boolean; speed?: number }) {
+    if (opts.speed !== undefined && opts.speed > 0) this.playerSpeed = opts.speed;
+    this.playerPlaying = opts.playing;
+    if (opts.playing) this.syncToTimeline = false;
+    this.stopPlayerTimer();
+    if (this.playerPlaying) {
+      // One waypoint per tick; the speed scales the tick rate (50ms base).
+      this.playerTimer = setInterval(() => this.advancePlayer(), 50 / this.playerSpeed);
+    }
+    this.notify();
+  }
+
+  /** Advance the player by one waypoint; stops at the last one. */
+  advancePlayer() {
+    if (!this.playerPlaying || !this.trajectory) return;
+    const count = this.trajectory.waypoints.length;
+    if (count === 0) return;
+    if (this.playerIndex + 1 >= count) {
+      this.playerPlaying = false;
+      this.stopPlayerTimer();
+    } else {
+      this.playerIndex += 1;
+      this.applyWaypoint(this.trajectory.waypoints[this.playerIndex]);
+      this.context?.requestRender();
+    }
+    this.notify();
+  }
+
+  /** Step the player by one waypoint without starting playback. */
+  stepTrajectory(delta: 1 | -1) {
+    if (!this.trajectory) return;
+    const count = this.trajectory.waypoints.length;
+    if (count === 0) return;
+    const next = Math.min(count - 1, Math.max(0, this.playerIndex + delta));
+    this.playerIndex = next;
+    this.applyWaypoint(this.trajectory.waypoints[next]);
+    this.context?.requestRender();
+    this.notify();
+  }
+
+  /** D6 panel: timeline sync on = the replay's joint streams own the
+   * pose (player paused); off = the player owns it. */
+  setSyncToTimeline(sync: boolean) {
+    this.syncToTimeline = sync;
+    if (sync) {
+      this.playerPlaying = false;
+      this.stopPlayerTimer();
+      // Return the pose to the last stream values.
+      this.applyCurrentPose();
+    }
+    this.notify();
+  }
+
+  /** D6 panel: ghost pose count, clamped to 1..20; rebuilds the ghosts. */
+  setGhostCount(count: number) {
+    this.ghostCount = Math.min(20, Math.max(1, Math.round(count)));
+    if (this.robotState === 'loaded' && this.trajectory) {
+      this.rebuildGhosts(this.trajectory.waypoints);
+      this.context?.requestRender();
+    }
+    this.notify();
+  }
+
+  /** D6 panel: collision wireframe overlay visibility. */
+  setCollisionVisible(visible: boolean) {
+    this.collisionVisible = visible;
+    if (this.collisionGroup) this.collisionGroup.visible = visible;
+    this.context?.requestRender();
+    this.notify();
   }
 
   /** D4.1: drive the loaded robot from the LeRobot attribution preview.
@@ -465,6 +622,7 @@ export class MoveItTool implements ViewportTool {
       this.robotModel.setJointValue(motion[i], waypoint[i]);
     }
     this.robotModel.updateWorld();
+    this.lastPoseValues = [...waypoint];
   }
 
   private handleTrajectory(batch: ToolBatch) {
@@ -532,7 +690,7 @@ export class MoveItTool implements ViewportTool {
   private rebuildGhosts(waypoints: number[][]) {
     if (!this.robotModel || !this.ghostsGroup) return;
     this.clearGhosts();
-    const count = DEFAULT_GHOST_COUNT;
+    const count = this.ghostCount;
     for (let k = 0; k < count; k++) {
       const index = count <= 1 ? 0 : Math.round((k / (count - 1)) * (waypoints.length - 1));
       const ghost = this.robotModel.clonePose(GHOST_OPACITY);
@@ -569,6 +727,7 @@ export class MoveItTool implements ViewportTool {
     this.clearSceneOverlay();
     this.collisionGroup = new Group();
     this.collisionGroup.name = 'moveit-collision';
+    this.collisionGroup.visible = this.collisionVisible;
     this.group.add(this.collisionGroup);
     if (!this.scene) return;
 
@@ -606,6 +765,7 @@ export class MoveItTool implements ViewportTool {
 
   private applyCurrentPose() {
     if (!this.robotModel) return;
+    if (this.playerPlaying) return; // the player owns the pose
     const values = this.jointPositions?.values ?? this.jointCommands?.values;
     if (!values) return;
     this.applyWaypoint(values);

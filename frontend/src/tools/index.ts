@@ -3,6 +3,7 @@
 
 import DvizPathPanel from './dviz/DvizPathPanel.vue';
 import { DvizPathTool } from './dviz/DvizPathTool';
+import MoveItPanel from './moveit/MoveItPanel.vue';
 import { MoveItTool } from './moveit/MoveItTool';
 import { toolRegistry } from './registry';
 
@@ -12,8 +13,9 @@ export function registerBuiltinTools() {
     dviz.panelComponent = DvizPathPanel;
     toolRegistry.register(dviz);
   }
-  // panelComponent binds at D6 (MoveItPanel.vue)
   if (!toolRegistry.get('moveit-bridge')) {
-    toolRegistry.register(new MoveItTool());
+    const moveit = new MoveItTool();
+    moveit.panelComponent = MoveItPanel;
+    toolRegistry.register(moveit);
   }
 }
