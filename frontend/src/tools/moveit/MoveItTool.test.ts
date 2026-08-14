@@ -66,7 +66,7 @@ const chainLoader: ModelLoader = async () => buildRobotModel(parseUrdf(CHAIN_URD
 
 type TestCase = {
   name: string;
-  run: () => void;
+  run: () => void | Promise<void>;
 };
 
 const makeContext = (): ToolContext => {
@@ -285,20 +285,20 @@ const tests: TestCase[] = [
       const root = rootGroup(context)!;
       assert.ok(root.children.find((c) => c.name === 'moveit-robot'));
 
-      // A trajectory batch now renders FK artifacts and keeps the chart hidden
+      // A trajectory batch now renders FK artifacts; with a loaded model
+      // the fallback chart is never created.
       tool.onBatch(batch('planner', 'trajectory', 1_000, json(TRAJECTORY_ENVELOPE)));
-      const chart = chartGroup(context);
-      assert.ok(chart);
-      assert.equal(chart.visible, false);
+      assert.equal(chartGroup(context), undefined);
       const eePath = root.children.find((c) => c.name === 'moveit-ee-path');
       assert.ok(eePath, 'EE path present');
       const ghosts = root.children.find((c) => c.name === 'moveit-ghosts') as Group;
       assert.ok(ghosts);
       assert.equal(ghosts.children.length, 5);
-      // EE path carries one vertex per waypoint
+      // LineGeometry instanceStart holds one vertex per SEGMENT
+      // (waypoints - 1) — 3 waypoints → 2 segments
       const line = (eePath as Group).children[0] as Line2;
       const count = line.geometry.getAttribute('instanceStart').count;
-      assert.equal(count, TRAJECTORY_ENVELOPE.waypoints.length);
+      assert.equal(count, TRAJECTORY_ENVELOPE.waypoints.length - 1);
     },
   },
   {
@@ -340,19 +340,22 @@ const tests: TestCase[] = [
       const tool = new MoveItTool(async () => buildRobotModel(parseUrdf(GRIPPER_URDF)));
       tool.onAttach(makeContext());
       await flush();
-      // 56.8° full range (student decision) → 0.991 rad; half → 0.03575 m
-      tool.previewPose([0.3, 28.4 * (Math.PI / 180)]);
+      // 56.8° full range (student decision) → 0.991 rad; half → 0.03575 m.
+      // Arm at 0 keeps the fingers' x offset unrotated for the exact check.
+      tool.previewPose([0, 28.4 * (Math.PI / 180)]);
       const model = tool.getRobotModel()!;
       model.updateWorld();
       const finger1 = model.getLinkWorldPosition('finger_left');
       const finger2 = model.getLinkWorldPosition('finger_right');
       assert.ok(Math.abs(finger1.x - 0.03575) < 1e-6, `finger1 x = ${finger1.x}`);
       assert.ok(Math.abs(finger2.x - 0.03575) < 1e-6, `finger2 x = ${finger2.x}`);
-      // Arm joint is a raw radian value
+      // Arm joint takes the raw radian value
+      tool.previewPose([0.3, 28.4 * (Math.PI / 180)]);
+      model.updateWorld();
       const angle = 2 * Math.acos(Math.min(1, Math.abs(model.joints.get('j1')!.pivot.quaternion.w)));
       assert.ok(Math.abs(angle - 0.3) < 1e-6);
       // Above-range gripper values clamp to the URDF limit
-      tool.previewPose([0.3, 10]);
+      tool.previewPose([0, 10]);
       model.updateWorld();
       assert.ok(Math.abs(model.getLinkWorldPosition('finger_left').x - 0.0715) < 1e-6);
     },
@@ -381,7 +384,9 @@ let failures = 0;
 
 for (const test of tests) {
   try {
-    test.run();
+    // Async tests must be awaited — a sync runner would print "ok" before
+    // the assertions ran and swallow async failures.
+    await test.run();
     console.log(`ok - ${test.name}`);
   } catch (error) {
     failures += 1;

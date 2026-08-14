@@ -28,6 +28,7 @@ import { LineGeometry } from 'three/examples/jsm/lines/LineGeometry.js';
 import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js';
 import type { Component } from 'vue';
 
+import { BACKEND_BASE_URL } from '../../api';
 import { computeStaleness } from '../dviz/DvizPathTool';
 import type { TfTree } from '../tf';
 import type { ToolBatch, ToolContext, ViewportTool } from '../types';
@@ -88,26 +89,20 @@ export type ModelLoader = (robotId: string) => Promise<RobotModel>;
 function defaultModelLoader(robotId: string): Promise<RobotModel> {
   const entry = AVAILABLE_MODELS.find((model) => model.robotId === robotId);
   if (!entry) return Promise.reject(new Error(`no local URDF for robot "${robotId}"`));
-  // Dynamic import: api.ts reads import.meta.env at module level, which
-  // crashes under tsx/node — the default loader only ever runs in the
-  // browser (tests inject their own loaders).
-  return import('../../api')
-    .then(({ BACKEND_BASE_URL }) => {
-      const urdfUrl = `${BACKEND_BASE_URL}${entry.urdfPath}`;
-      const meshBaseUrl = `${BACKEND_BASE_URL}${entry.meshBasePath}`;
-      return fetch(urdfUrl)
-        .then((response) => {
-          if (!response.ok) throw new Error(`URDF fetch failed: ${response.status}`);
-          return response.text();
-        })
-        .then((urdfText) =>
-          loadUrdfRobot(urdfText, async (relativePath) => {
-            const response = await fetch(`${meshBaseUrl}${relativePath}`);
-            if (!response.ok) throw new Error(`mesh fetch failed: ${response.status}`);
-            return response.arrayBuffer();
-          }),
-        );
-    });
+  const urdfUrl = `${BACKEND_BASE_URL}${entry.urdfPath}`;
+  const meshBaseUrl = `${BACKEND_BASE_URL}${entry.meshBasePath}`;
+  return fetch(urdfUrl)
+    .then((response) => {
+      if (!response.ok) throw new Error(`URDF fetch failed: ${response.status}`);
+      return response.text();
+    })
+    .then((urdfText) =>
+      loadUrdfRobot(urdfText, async (relativePath) => {
+        const response = await fetch(`${meshBaseUrl}${relativePath}`);
+        if (!response.ok) throw new Error(`mesh fetch failed: ${response.status}`);
+        return response.arrayBuffer();
+      }),
+    );
 }
 
 export type RobotState = 'loading' | 'loaded' | 'unavailable';
@@ -383,24 +378,25 @@ export class MoveItTool implements ViewportTool {
     try {
       const model = await this.modelLoader(robotId);
       if (epoch !== this.attachEpoch || !this.group) return; // detached meanwhile
+      this.disposeRobot(); // drop any previous model before mounting
       this.robotModel = model;
       this.robotState = 'loaded';
       this.mountRobot();
       this.renderFkArtifacts();
       this.context?.requestRender();
       this.notify();
-    } catch {
+    } catch (error) {
       if (epoch !== this.attachEpoch) return;
+      console.error(`moveit robot "${robotId}" load failed:`, error);
       this.robotState = 'unavailable';
       this.notify();
     }
   }
 
   /** Add the model root under the tool group; the chart hides when a
-   * model is available. */
+   * model is available. loadRobot() disposes any previous model first. */
   private mountRobot() {
     if (!this.group || !this.robotModel) return;
-    this.disposeRobot();
     this.robotGroup = new Group();
     this.robotGroup.name = 'moveit-robot';
     this.robotGroup.add(this.robotModel.root);
