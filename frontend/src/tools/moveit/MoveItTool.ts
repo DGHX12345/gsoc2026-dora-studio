@@ -20,6 +20,7 @@ import {
   Group,
   Line,
   LineBasicMaterial,
+  LineSegments,
   Material,
   Vector3,
 } from 'three';
@@ -42,6 +43,12 @@ import {
   parseTrajectory,
 } from './parse';
 import type { ExecutionStatus, PlanningScene, PlanStatus } from './types';
+import {
+  buildWireframeMesh,
+  disposeWireframeMesh,
+  findCollisions,
+  type CollisionPair,
+} from './collision';
 import { loadUrdfRobot } from './urdf/meshes';
 import type { RobotModel } from './urdf/robot';
 
@@ -125,6 +132,7 @@ export interface MoveItSnapshot {
   jointCommands: { values: number[]; lastBatchTs: number } | null;
   jointPositions: { values: number[]; lastBatchTs: number } | null;
   scene: { data: PlanningScene; lastBatchTs: number } | null;
+  sceneCollisions: { a: string; b: string; distance: number }[];
   lastSeekTs: number | null;
 }
 
@@ -173,6 +181,12 @@ export class MoveItTool implements ViewportTool {
   private eePathGroup: Group | null = null;
   private eePathGeometry: LineGeometry | null = null;
   private eePathMaterial: LineMaterial | null = null;
+
+  // D5 collision scene overlay
+  private collisionGroup: Group | null = null;
+  private attachedWires: LineSegments[] = [];
+  private sceneCollisions: CollisionPair[] = [];
+  private lastSceneVersion: number | null = null;
 
   // Parallel-coordinates chart resources (D2 fallback visualization)
   private chartGroup: Group | null = null;
@@ -236,6 +250,12 @@ export class MoveItTool implements ViewportTool {
       const scene = parseSceneUpdate(batch.payload);
       if (scene) {
         this.scene = { data: scene, lastBatchTs: batch.timestampNs };
+        // The demo re-sends scenes; only a version bump rebuilds the overlay.
+        if (scene.version !== this.lastSceneVersion) {
+          this.lastSceneVersion = scene.version;
+          this.renderSceneOverlay();
+          this.context?.requestRender();
+        }
         this.notify();
       }
     }
@@ -262,6 +282,8 @@ export class MoveItTool implements ViewportTool {
     this.jointCommands = null;
     this.jointPositions = null;
     this.scene = null;
+    this.sceneCollisions = [];
+    this.lastSceneVersion = null;
     this.robotId = null;
     this.numJoints = null;
     this.lastSeekTs = null;
@@ -310,6 +332,7 @@ export class MoveItTool implements ViewportTool {
       jointCommands: this.jointCommands ? { ...this.jointCommands } : null,
       jointPositions: this.jointPositions ? { ...this.jointPositions } : null,
       scene: this.scene ? { ...this.scene } : null,
+      sceneCollisions: [...this.sceneCollisions],
       lastSeekTs: this.lastSeekTs,
     };
   }
@@ -411,6 +434,10 @@ export class MoveItTool implements ViewportTool {
     this.group.add(this.ghostsGroup);
 
     if (this.chartGroup) this.chartGroup.visible = false;
+
+    // A scene that arrived before the model now re-parents its attached
+    // objects under the fresh link groups.
+    if (this.scene) this.renderSceneOverlay();
   }
 
   private resolveNumJoints(): number | null {
@@ -533,6 +560,50 @@ export class MoveItTool implements ViewportTool {
     }
   }
 
+  /** Yellow wireframe overlays for the planning scene (D5): world objects
+   * under the tool group at their scene positions; attached objects parent
+   * under their robot link so they follow the model. Also refreshes the
+   * bounding-sphere collision report. */
+  private renderSceneOverlay() {
+    if (!this.group) return;
+    this.clearSceneOverlay();
+    this.collisionGroup = new Group();
+    this.collisionGroup.name = 'moveit-collision';
+    this.group.add(this.collisionGroup);
+    if (!this.scene) return;
+
+    for (const obj of this.scene.data.world_objects) {
+      this.collisionGroup.add(buildWireframeMesh(obj));
+    }
+    for (const obj of this.scene.data.attached_objects) {
+      const wire = buildWireframeMesh(obj);
+      const link = this.robotModel?.links.get(obj.attached_link);
+      if (link) {
+        link.add(wire);
+      } else {
+        this.collisionGroup.add(wire);
+      }
+      this.attachedWires.push(wire);
+    }
+    this.sceneCollisions = findCollisions(this.scene.data.world_objects);
+  }
+
+  private clearSceneOverlay() {
+    if (this.collisionGroup && this.group) this.group.remove(this.collisionGroup);
+    if (this.collisionGroup) {
+      for (const child of [...this.collisionGroup.children]) {
+        disposeWireframeMesh(child as LineSegments);
+        this.collisionGroup.remove(child);
+      }
+    }
+    for (const wire of this.attachedWires) {
+      wire.removeFromParent();
+      disposeWireframeMesh(wire);
+    }
+    this.attachedWires = [];
+    this.collisionGroup = null;
+  }
+
   private applyCurrentPose() {
     if (!this.robotModel) return;
     const values = this.jointPositions?.values ?? this.jointCommands?.values;
@@ -626,6 +697,7 @@ export class MoveItTool implements ViewportTool {
   }
 
   private disposeRobot() {
+    this.clearSceneOverlay(); // attached wires live inside the model tree
     this.clearGhosts();
     if (this.robotGroup && this.group) this.group.remove(this.robotGroup);
     if (this.robotModel) disposeObject(this.robotModel.root);

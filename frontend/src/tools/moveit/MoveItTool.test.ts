@@ -4,7 +4,7 @@
 // three object construction works without a renderer.
 
 import assert from 'node:assert/strict';
-import { BufferAttribute, Frustum, Group, Line, Matrix4, PerspectiveCamera, Scene, Vector3 } from 'three';
+import { BufferAttribute, Frustum, Group, Line, LineSegments, Matrix4, PerspectiveCamera, Scene, Vector3 } from 'three';
 import { Line2 } from 'three/examples/jsm/lines/Line2.js';
 
 import { matchToolPorts } from '../matching';
@@ -369,6 +369,94 @@ const tests: TestCase[] = [
       };
       tool.onBatch(batch('planner', 'trajectory', 3_000, json(changed)));
       assert.notEqual(root.children.find((c) => c.name === 'moveit-ee-path'), firstEePath);
+    },
+  },
+  {
+    name: 'scene_update batches render yellow wireframes and report collisions',
+    run: async () => {
+      const tool = new MoveItTool(chainLoader);
+      const context = makeContext();
+      tool.onAttach(context);
+      await flush();
+      tool.onBatch(
+        batch(
+          'planning_scene',
+          'scene_update',
+          1_000,
+          json({
+            version: 1,
+            world_objects: [
+              { name: 'a', type: 'sphere', position: [0, 0, 0], dimensions: [0.3], color: [1, 1, 0, 1] },
+              { name: 'b', type: 'sphere', position: [0.5, 0, 0], dimensions: [0.3], color: [1, 1, 0, 1] },
+              { name: 'table', type: 'box', position: [2, 2, 2], dimensions: [0.8, 0.6, 0.4], color: [1, 1, 0, 1] },
+            ],
+            attached_objects: [],
+            robot_state: { joint_positions: [], gripper_state: 0 },
+          }),
+        ),
+      );
+      const root = rootGroup(context)!;
+      const collision = root.children.find((c) => c.name === 'moveit-collision') as Group;
+      assert.ok(collision, 'collision overlay present');
+      assert.equal(collision.children.length, 3);
+      assert.equal((collision.children[0] as LineSegments).name, 'collision-a');
+      const snapshot = tool.getSnapshot();
+      assert.equal(snapshot.sceneCollisions.length, 1);
+      assert.equal(snapshot.sceneCollisions[0].a, 'a');
+      assert.equal(snapshot.sceneCollisions[0].b, 'b');
+    },
+  },
+  {
+    name: 'attached scene objects parent under their robot link',
+    run: async () => {
+      const tool = new MoveItTool(chainLoader);
+      const context = makeContext();
+      tool.onAttach(context);
+      await flush();
+      tool.onBatch(
+        batch(
+          'planning_scene',
+          'scene_update',
+          1_000,
+          json({
+            version: 1,
+            world_objects: [],
+            attached_objects: [
+              { name: 'tool', type: 'cylinder', position: [0, 0, 0.1], dimensions: [0.05, 0.2], attached_link: 'link1' },
+            ],
+            robot_state: { joint_positions: [], gripper_state: 0 },
+          }),
+        ),
+      );
+      const model = tool.getRobotModel()!;
+      const link1 = model.links.get('link1')!;
+      const wire = link1.children.find((c) => c.name === 'collision-tool') as LineSegments;
+      assert.ok(wire, 'attached wireframe parented under link1');
+      // The link-local position is applied directly
+      assert.equal(wire.position.z, 0.1);
+    },
+  },
+  {
+    name: 'identical scene versions skip the overlay rebuild',
+    run: async () => {
+      const tool = new MoveItTool(chainLoader);
+      const context = makeContext();
+      tool.onAttach(context);
+      await flush();
+      const payload = json({
+        version: 2,
+        world_objects: [
+          { name: 'a', type: 'sphere', position: [0, 0, 0], dimensions: [0.3], color: [1, 1, 0, 1] },
+        ],
+        attached_objects: [],
+        robot_state: { joint_positions: [], gripper_state: 0 },
+      });
+      tool.onBatch(batch('planning_scene', 'scene_update', 1_000, payload));
+      const root = rootGroup(context)!;
+      const first = (root.children.find((c) => c.name === 'moveit-collision') as Group).children[0];
+      tool.onBatch(batch('planning_scene', 'scene_update', 2_000, payload));
+      const second = (root.children.find((c) => c.name === 'moveit-collision') as Group).children[0];
+      assert.equal(first, second, 'same version: same wireframe object survives');
     },
   },
   {
