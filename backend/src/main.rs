@@ -7,6 +7,7 @@ mod dataflows;
 mod drec;
 mod external;
 mod lerobot;
+mod live;
 mod metrics;
 mod model_catalog;
 mod monitoring;
@@ -36,6 +37,7 @@ struct AppState {
     recordings: drec::service::RecordingManager,
     monitoring: monitoring::MonitoringController,
     profiles: profile::ProfileManager,
+    live: live::LiveFeed,
 }
 
 #[tokio::main]
@@ -78,6 +80,7 @@ async fn main() {
         profiles: profile::ProfileManager::new(
             &PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../profiles"),
         ),
+        live: live::LiveFeed::new(),
     });
 
     // Wait for WS connect attempt to settle (up to 3s) before starting server
@@ -145,6 +148,8 @@ async fn main() {
         .route("/api/lerobot/profiles", get(lerobot_profiles))
         .route("/api/lerobot/autodetect", post(lerobot_autodetect))
         .route("/api/lerobot/attribution", post(lerobot_attribution))
+        .route("/api/live/ingest", post(live_ingest))
+        .route("/api/live/recent", get(live_recent))
         .with_state(state)
         .layer(CorsLayer::permissive());
 
@@ -996,6 +1001,46 @@ async fn lerobot_attribution(
         "tasks": info.tasks,
         "angleUnit": profile.angle_unit.as_str(),
     })))
+}
+
+// --- Live API (M15 B3) ---
+
+#[derive(serde::Deserialize)]
+struct LiveRecentQuery {
+    stream: Option<String>,
+    since_ts: Option<u64>,
+    limit: Option<usize>,
+}
+
+async fn live_ingest(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<live::IngestRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    state
+        .live
+        .ingest(live::LiveFrame {
+            node_id: req.node_id,
+            output_id: req.output_id,
+            timestamp: req.timestamp,
+            payload: req.payload,
+        })
+        .map_err(|e| ApiError {
+            status: StatusCode::BAD_REQUEST,
+            message: e.0,
+        })?;
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+async fn live_recent(
+    State(state): State<Arc<AppState>>,
+    Query(q): Query<LiveRecentQuery>,
+) -> Json<live::RecentResponse> {
+    let limit = q
+        .limit
+        .unwrap_or(live::DEFAULT_FRAME_LIMIT)
+        .min(live::MAX_FRAME_LIMIT);
+    let frames = state.live.recent(q.stream.as_deref(), q.since_ts, limit);
+    Json(live::RecentResponse { frames })
 }
 
 // --- Metrics API (M07) ---
