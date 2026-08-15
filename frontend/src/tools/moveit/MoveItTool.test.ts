@@ -348,6 +348,28 @@ const tests: TestCase[] = [
     },
   },
   {
+    name: 'ghost count zero hides all ghosts and the count round-trips',
+    run: async () => {
+      const tool = new MoveItTool(chainLoader, stubCatalog);
+      const context = makeContext();
+      tool.onAttach(context);
+      await flush();
+      tool.onBatch(batch('planner', 'trajectory', 1_000, json(TRAJECTORY_ENVELOPE)));
+      const ghosts = rootGroup(context)!.children.find(
+        (c) => c.name === 'moveit-ghosts',
+      ) as Group;
+      assert.equal(ghosts.children.length, 5);
+
+      tool.setGhostCount(0);
+      assert.equal(ghosts.children.length, 0);
+      assert.equal(tool.getSnapshot().ghostCount, 0);
+
+      tool.setGhostCount(3);
+      assert.equal(ghosts.children.length, 3);
+      assert.equal(tool.getSnapshot().ghostCount, 3);
+    },
+  },
+  {
     name: 'identical trajectory batches skip the FK rebuild',
     run: async () => {
       const tool = new MoveItTool(chainLoader, stubCatalog);
@@ -573,7 +595,7 @@ const tests: TestCase[] = [
     },
   },
   {
-    name: 'setGhostCount rebuilds ghosts within 1..20',
+    name: 'setGhostCount rebuilds ghosts within 0..20',
     run: async () => {
       const tool = new MoveItTool(chainLoader, stubCatalog);
       const context = makeContext();
@@ -588,7 +610,7 @@ const tests: TestCase[] = [
       tool.setGhostCount(25);
       assert.equal(ghosts(), 20, 'clamped to 20');
       tool.setGhostCount(0);
-      assert.equal(ghosts(), 1, 'clamped to 1');
+      assert.equal(ghosts(), 0, 'clamped to 0');
     },
   },
   {

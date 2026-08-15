@@ -494,9 +494,10 @@ export class MoveItTool implements ViewportTool {
     this.notify();
   }
 
-  /** D6 panel: ghost pose count, clamped to 1..20; rebuilds the ghosts. */
+  /** D6 panel: ghost pose count, clamped to 0..20 (0 hides all ghosts);
+   * rebuilds the ghosts. */
   setGhostCount(count: number) {
-    this.ghostCount = Math.min(20, Math.max(1, Math.round(count)));
+    this.ghostCount = Math.min(20, Math.max(0, Math.round(count)));
     if (this.robotState === 'loaded' && this.trajectory) {
       this.rebuildGhosts(this.trajectory.waypoints);
       this.context?.requestRender();

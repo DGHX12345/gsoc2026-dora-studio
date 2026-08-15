@@ -92,7 +92,7 @@
       <input
         class="mp-range"
         type="range"
-        min="1"
+        min="0"
         max="20"
         :value="snapshot.ghostCount"
         @input="onGhostCount"
