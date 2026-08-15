@@ -1,0 +1,63 @@
+# M15 B5 live planning demo — real A* planning + demo executor, live in
+# Studio through the studio_bridge node.
+#
+# REAL: simple_planner runs an actual A* search over the costmap and its
+# path visibly avoids the obstacle; the target orbit periodically lands
+# inside the obstacle so the planner honestly reports "no path found".
+# DEMO (labeled): costmap_source generates synthetic sensor data; the
+# trajectory_executor echoes commands as joint_positions (no physics —
+# the dora-mujoco mirror is Phase C).
+#
+# Run (dora venv active):
+#   dora up
+#   cd examples/live-demo && dora start dataflow.yml --name live-planning
+# Then in Studio: Visualization -> Live mode -> enable "Live Feed" ->
+# mount the dviz-path and MoveIt tools.
+#
+# Tests:
+#   /home/dora/.venvs/dora-studio/bin/python -m unittest \
+#     test_costmap_source test_simple_planner test_trajectory_executor \
+#     (from examples/live-demo/nodes)
+
+nodes:
+  - id: costmap_source
+    path: nodes/costmap_source.py
+    outputs:
+      - costmap
+      - scene_update
+      - target_point
+
+  - id: simple_planner
+    path: nodes/simple_planner.py
+    inputs:
+      costmap: costmap_source/costmap
+      target: costmap_source/target_point
+    outputs:
+      - waypoints
+      - plan_status
+
+  - id: trajectory_executor
+    path: nodes/trajectory_executor.py
+    inputs:
+      target: costmap_source/target_point
+      tick: dora/timer/millis/50
+    outputs:
+      - trajectory
+      - joint_commands
+      - joint_positions
+      - execution_status
+
+  - id: studio_bridge
+    path: ../../backend/scripts/studio_bridge.py
+    inputs:
+      costmap: costmap_source/costmap
+      scene_update: costmap_source/scene_update
+      target_point: costmap_source/target_point
+      waypoints: simple_planner/waypoints
+      plan_status: simple_planner/plan_status
+      trajectory: trajectory_executor/trajectory
+      joint_commands: trajectory_executor/joint_commands
+      joint_positions: trajectory_executor/joint_positions
+      execution_status: trajectory_executor/execution_status
+    env:
+      STUDIO_BACKEND_URL: http://127.0.0.1:3001/api/live/ingest
