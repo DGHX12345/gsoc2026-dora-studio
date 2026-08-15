@@ -64,9 +64,10 @@
           </div>
         </div>
         <div class="scene-actions">
-          <button disabled>+ Add Box</button>
-          <button class="secondary" disabled>+ Add Sphere</button>
-          <button class="secondary" disabled>− Remove</button>
+          <button :disabled="consoleBusy" @click="addBox">+ {{ t.motionConsole.addBox }}</button>
+          <button class="secondary" :disabled="consoleBusy || addedObjects.length === 0" @click="removeLastBox">
+            − {{ t.motionConsole.removeBox }}
+          </button>
         </div>
       </div>
 
@@ -105,44 +106,48 @@
       <div class="motion-section">
         <div class="motion-section-header">
           <h3>Motion Control</h3>
+          <span class="pill" :class="consoleFeedStatus === 'connected' ? 'success' : 'failed'">
+            {{ consoleFeedStatus === 'connected' ? t.motionConsole.feedOn : t.motionConsole.feedOff }}
+          </span>
         </div>
 
-        <div class="goal-tabs">
-          <button class="goal-tab active" disabled>Joint Goal</button>
-          <button class="goal-tab" disabled>Pose Goal</button>
-          <button class="goal-tab" disabled>Cartesian Path</button>
-        </div>
-
-        <div class="joint-goal-grid">
-          <div v-for="joint in goalJointRows" :key="joint.name" class="joint-goal-cell">
-            <label>{{ joint.name }}</label>
-            <input
-              v-model.number="nanoArmJointState[joint.name]"
-              type="number"
-              :min="joint.lower"
-              :max="joint.upper"
-              :step="joint.name === 'joint6' ? 0.001 : 0.01"
-            />
+        <!-- B6: live console — Plan/Execute/Stop send real requests to the
+             running dataflow through the backend command queue. The joint
+             grid below stays the local read-only mirror. -->
+        <div class="console-field-row">
+          <label>{{ t.motionConsole.targetLabel }}</label>
+          <div class="console-target-inputs">
+            <input v-model="targetX" type="text" class="console-input" :title="t.motionConsole.targetX" />
+            <input v-model="targetY" type="text" class="console-input" :title="t.motionConsole.targetY" />
+            <input v-model="targetZ" type="text" class="console-input" :title="t.motionConsole.targetZ" />
           </div>
+        </div>
+        <div class="console-field-row">
+          <label>{{ t.motionConsole.plannerLabel }}</label>
+          <select v-model="selectedPlanner" class="console-select">
+            <option v-for="planner in plannerOptions" :key="planner.id" :value="planner.id">
+              {{ planner.label }}
+            </option>
+          </select>
         </div>
 
         <div class="control-row motion-actions">
-          <button class="primary-action" disabled>Plan</button>
-          <button class="primary-action execute" disabled>Execute</button>
-          <button class="secondary" disabled>Stop</button>
+          <button class="primary-action" :disabled="consoleBusy" @click="sendPlan">Plan</button>
+          <button class="primary-action execute" :disabled="consoleBusy" @click="sendCommand('execute')">Execute</button>
+          <button class="secondary" :disabled="consoleBusy" @click="sendCommand('stop')">Stop</button>
+          <button class="secondary" :disabled="consoleBusy" @click="sendCommand('auto')" :title="t.motionConsole.autoHint">Auto</button>
         </div>
+        <div v-if="consoleError" class="rp-error">{{ consoleError }}</div>
 
-        <div class="planner-config">
-          <label>Robot Config</label>
-          <input type="text" :value="moveitSnapshot.robotConfigId" disabled />
-          <label>Planner</label>
-          <select disabled>
-            <option>RRT-Connect</option>
-            <option>RRT</option>
-            <option>PRM</option>
-          </select>
-          <label>Planning Time</label>
-          <input type="text" value="5.0s" disabled />
+        <div class="console-status">
+          <span v-if="livePlanStatus !== null" :class="['pill', (livePlanStatus.success as boolean) ? 'success' : 'failed']">
+            {{ t.motionConsole.planLabel }}: {{ (livePlanStatus.success as boolean) ? t.motionConsole.planOk : t.motionConsole.planFail }}
+            <template v-if="typeof livePlanStatus.path_length === 'number'"> · {{ livePlanStatus.path_length }}m</template>
+          </span>
+          <span v-if="liveExecution !== null" :class="['pill', (liveExecution.is_executing as boolean) ? 'success' : '']">
+            {{ t.motionConsole.executionLabel }}: {{ (liveExecution.is_executing as boolean) ? t.motionConsole.executing : t.motionConsole.idle }}
+            <template v-if="typeof liveExecution.progress === 'number'"> · {{ Math.round((liveExecution.progress as number) * 100) }}%</template>
+          </span>
         </div>
 
         <div class="motion-boundary-card">
@@ -220,17 +225,30 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import {
   BACKEND_BASE_URL,
+  getDataflowGraph,
+  getDataflows,
+  getLiveRecent,
   getMoveitSnapshot,
   getMoveitStatus,
   getRobotProfile,
+  postLiveCommand,
   type ApiSource,
   type MoveitSnapshotResponse,
   type MoveitStatusResponse,
   type RobotProfileResponse,
 } from '../api'
+import { useI18n } from '../i18n'
+import {
+  buildExecuteCommand,
+  buildPlanCommand,
+  buildSceneAddCommand,
+  buildSceneRemoveCommand,
+  extractConsoleStatus,
+  parseTargetInputs,
+} from '../live-command'
 import {
   buildNanoArmModelResources,
   createNanoArmJointState,
@@ -449,5 +467,125 @@ onMounted(async () => {
   moveitSnapshotData.value = moveitSnapshotResult.data
   moveitSnapshotSource.value = moveitSnapshotResult.source
   seedNanoArmJointState()
+
+  detectPlanners()
+  feedTimer = setInterval(() => void pollConsoleFeed(), 1000)
 })
+
+onBeforeUnmount(() => {
+  if (feedTimer !== null) clearInterval(feedTimer)
+})
+
+// --- M15 B6: live planning console ---
+
+const { t } = useI18n()
+const targetX = ref('0.55')
+const targetY = ref('0.20')
+const targetZ = ref('0.30')
+const selectedPlanner = ref('simple_planner')
+const plannerOptions = ref<{ id: string; label: string }[]>([
+  { id: 'simple_planner', label: 'simple_planner (A* grid)' },
+])
+const consoleBusy = ref(false)
+const consoleError = ref<string | null>(null)
+const consoleFeedStatus = ref<'connected' | 'unavailable'>('unavailable')
+const livePlanStatus = ref<Record<string, unknown> | null>(null)
+const liveExecution = ref<Record<string, unknown> | null>(null)
+const addedObjects = ref<string[]>([])
+let lastFeedTs = Date.now() * 1_000_000 - 2_000_000_000
+let feedTimer: ReturnType<typeof setInterval> | null = null
+
+async function sendCommand(kind: 'execute' | 'stop' | 'auto') {
+  consoleBusy.value = true
+  consoleError.value = null
+  try {
+    await postLiveCommand(buildExecuteCommand(kind))
+  } catch (e) {
+    consoleError.value = e instanceof Error ? e.message : t.value.motionConsole.sendFailed
+  } finally {
+    consoleBusy.value = false
+  }
+}
+
+async function sendPlan() {
+  const target = parseTargetInputs(targetX.value, targetY.value, targetZ.value)
+  if (target === null) {
+    consoleError.value = t.value.motionConsole.invalidTarget
+    return
+  }
+  consoleBusy.value = true
+  consoleError.value = null
+  try {
+    await postLiveCommand(buildPlanCommand(target, selectedPlanner.value || undefined))
+  } catch (e) {
+    consoleError.value = e instanceof Error ? e.message : t.value.motionConsole.sendFailed
+  } finally {
+    consoleBusy.value = false
+  }
+}
+
+async function addBox() {
+  const name = `box_${addedObjects.value.length + 1}`
+  consoleBusy.value = true
+  consoleError.value = null
+  try {
+    await postLiveCommand(buildSceneAddCommand(name, 'box', [0.6, 0.4, 0.15], [0.1, 0.1, 0.3]))
+    addedObjects.value.push(name)
+  } catch (e) {
+    consoleError.value = e instanceof Error ? e.message : t.value.motionConsole.sendFailed
+  } finally {
+    consoleBusy.value = false
+  }
+}
+
+async function removeLastBox() {
+  const name = addedObjects.value.pop()
+  if (!name) return
+  consoleBusy.value = true
+  consoleError.value = null
+  try {
+    await postLiveCommand(buildSceneRemoveCommand(name))
+  } catch (e) {
+    consoleError.value = e instanceof Error ? e.message : t.value.motionConsole.sendFailed
+  } finally {
+    consoleBusy.value = false
+  }
+}
+
+async function pollConsoleFeed() {
+  try {
+    const { frames } = await getLiveRecent(lastFeedTs)
+    if (frames.length > 0) {
+      lastFeedTs = Math.max(...frames.map((f) => f.timestamp))
+    }
+    const status = extractConsoleStatus(frames)
+    if (status.planStatus !== null) livePlanStatus.value = status.planStatus
+    if (status.execution !== null) liveExecution.value = status.execution
+    consoleFeedStatus.value = 'connected'
+  } catch {
+    consoleFeedStatus.value = 'unavailable'
+  }
+}
+
+/** Detect planner nodes from the discovered dataflow graphs so the
+ * selector lists what is actually available (fallback: simple_planner). */
+async function detectPlanners() {
+  try {
+    const { data: dataflows } = await getDataflows([])
+    for (const dataflow of dataflows) {
+      const { data: graph } = await getDataflowGraph(dataflow.id, {
+        nodes: [],
+        edges: [],
+        diagnostics: [],
+      })
+      for (const node of graph.nodes) {
+        if (!/planner|move_group|ompl/i.test(node.id)) continue
+        if (plannerOptions.value.some((p) => p.id === node.id)) continue
+        plannerOptions.value.push({ id: node.id, label: `${node.id} (${dataflow.name})` })
+      }
+    }
+  } catch {
+    // keep the default option; honest empty detection
+  }
+}
 </script>

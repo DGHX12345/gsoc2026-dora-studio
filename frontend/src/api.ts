@@ -816,3 +816,21 @@ export function getLiveRecent(sinceTs: number, limit = 500) {
   qs.set('limit', String(limit))
   return fetchJson<LiveRecentResponse>(`/live/recent?${qs.toString()}`)
 }
+
+// --- Live command API (M15 B6) ---
+
+export type LiveCommandRequest = {
+  kind: string
+  planner?: string
+  target?: number[]
+  action?: string
+  object?: Record<string, unknown>
+}
+
+export function postLiveCommand(command: LiveCommandRequest) {
+  return fetchJson<{ seq: number; kind: string }>('/live/command', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(command),
+  })
+}

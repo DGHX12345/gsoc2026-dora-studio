@@ -3008,6 +3008,52 @@ td span {
   padding: 7px 10px;
 }
 
+/* M15 B6: live planning console (Motion Planner page) */
+.console-field-row {
+  align-items: center;
+  display: flex;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.console-field-row label {
+  color: var(--text-primary);
+  font-size: 13px;
+  min-width: 130px;
+}
+
+.console-target-inputs {
+  display: flex;
+  gap: 6px;
+}
+
+.console-input,
+.console-select {
+  background: var(--bg-surface);
+  border: 1px solid var(--hairline);
+  border-radius: 9px;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 13px;
+  padding: 7px 10px;
+}
+
+.console-input {
+  width: 64px;
+}
+
+.console-select {
+  flex: 1;
+  max-width: 260px;
+}
+
+.console-status {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
 .trajectory-table-wrap {
   border: 1px solid #edf2f8;
   border-radius: 14px;

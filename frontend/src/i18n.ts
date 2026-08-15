@@ -143,6 +143,26 @@ type Messages = {
     error: string
     hint: string
   }
+  motionConsole: {
+    feedOn: string
+    feedOff: string
+    targetLabel: string
+    targetX: string
+    targetY: string
+    targetZ: string
+    plannerLabel: string
+    planLabel: string
+    planOk: string
+    planFail: string
+    executionLabel: string
+    executing: string
+    idle: string
+    autoHint: string
+    addBox: string
+    removeBox: string
+    invalidTarget: string
+    sendFailed: string
+  }
 }
 
 const messages: Record<Locale, Messages> = {
@@ -290,6 +310,26 @@ const messages: Record<Locale, Messages> = {
       error: '后端不可达',
       hint: '通过 studio_bridge 节点接收运行中 dataflow 的实时端口数据',
     },
+    motionConsole: {
+      feedOn: '实时状态已连接',
+      feedOff: '后端不可达',
+      targetLabel: '目标位置 (x, y, z)',
+      targetX: 'x 坐标',
+      targetY: 'y 坐标',
+      targetZ: 'z 坐标',
+      plannerLabel: '规划器',
+      planLabel: '规划',
+      planOk: '成功',
+      planFail: '失败',
+      executionLabel: '执行',
+      executing: '执行中',
+      idle: '空闲',
+      autoHint: '恢复自动目标（轨道演示）',
+      addBox: '添加箱子',
+      removeBox: '移除箱子',
+      invalidTarget: '目标坐标无效：请输入有限数字',
+      sendFailed: '命令发送失败',
+    },
   },
   en: {
     app: {
@@ -434,6 +474,26 @@ const messages: Record<Locale, Messages> = {
       on: 'receiving',
       error: 'backend unreachable',
       hint: 'Receive live port data from a running dataflow via the studio_bridge node',
+    },
+    motionConsole: {
+      feedOn: 'live feed connected',
+      feedOff: 'backend unreachable',
+      targetLabel: 'Target position (x, y, z)',
+      targetX: 'x coordinate',
+      targetY: 'y coordinate',
+      targetZ: 'z coordinate',
+      plannerLabel: 'Planner',
+      planLabel: 'Plan',
+      planOk: 'ok',
+      planFail: 'failed',
+      executionLabel: 'Execution',
+      executing: 'executing',
+      idle: 'idle',
+      autoHint: 'Resume the automatic orbit target',
+      addBox: 'Add Box',
+      removeBox: 'Remove Box',
+      invalidTarget: 'Invalid target: enter finite numbers',
+      sendFailed: 'Command failed to send',
     },
   },
 }
