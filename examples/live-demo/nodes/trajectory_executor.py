@@ -57,6 +57,16 @@ def progress_fraction(step_index, total_steps):
     return min(1.0, step_index / total_steps)
 
 
+def parse_execute_command(payload):
+    """B6: {"command": "execute"|"stop"} -> command string, else None."""
+    if not isinstance(payload, dict):
+        return None
+    command = payload.get("command")
+    if command in ("execute", "stop"):
+        return command
+    return None
+
+
 def trajectory_envelope(samples):
     """The {waypoints: [[q...], ...]} JSON envelope (M13 port-collision
     policy: unambiguous against dviz xyz paths on the trajectory port)."""
@@ -81,31 +91,63 @@ def main():
         event = node.try_recv()
         if event is not None and event.get("type") == "STOP":
             break
-        if event is not None and event.get("type") == "INPUT" and event["id"] == "target":
-            value = event.get("value")
-            if value is not None:
-                arr = value.to_pylist()
-                if len(arr) >= 2:
-                    new_target = (float(arr[0]), float(arr[1]))
-                    if math.hypot(new_target[0] - target[0], new_target[1] - target[1]) > 0.02:
-                        target = new_target
+        if event is not None and event.get("type") == "INPUT":
+            if event["id"] == "target":
+                value = event.get("value")
+                if value is not None:
+                    arr = value.to_pylist()
+                    if len(arr) >= 2:
+                        new_target = (float(arr[0]), float(arr[1]))
+                        if math.hypot(new_target[0] - target[0], new_target[1] - target[1]) > 0.02:
+                            target = new_target
+                            samples = plan_samples(
+                                q_current, pose_toward_target(target), MOVE_DURATION_S, TICK_S
+                            )
+                            step = 0
+                            execution_count += 1
+                            # The planned joint path for this move (MoveIt EE
+                            # path), envelope form per the M13 port policy.
+                            envelope = trajectory_envelope(samples)
+                            node.send_output(
+                                "trajectory",
+                                pa.array(
+                                    list(json.dumps(envelope).encode()), type=pa.uint8()
+                                ),
+                                {"num_waypoints": len(samples), "num_joints": 7},
+                            )
+            elif event["id"] == "execute":
+                value = event.get("value")
+                if value is not None:
+                    try:
+                        command = json.loads(bytes(value.to_pylist()).decode("utf-8"))
+                    except (UnicodeDecodeError, json.JSONDecodeError):
+                        command = None
+                    parsed = parse_execute_command(command)
+                    if parsed == "stop":
+                        samples = []
+                        step = 0
+                    elif parsed == "execute" and not samples:
                         samples = plan_samples(
                             q_current, pose_toward_target(target), MOVE_DURATION_S, TICK_S
                         )
                         step = 0
                         execution_count += 1
-                        # The planned joint path for this move (MoveIt EE
-                        # path), envelope form per the M13 port policy.
-                        envelope = trajectory_envelope(samples)
-                        node.send_output(
-                            "trajectory",
-                            pa.array(
-                                list(json.dumps(envelope).encode()), type=pa.uint8()
-                            ),
-                            {"num_waypoints": len(samples), "num_joints": 7},
-                        )
 
         if not samples:
+            # Stopped (console Stop): hold the pose, report idle honestly.
+            node.send_output("joint_commands", pa.array(q_current))
+            node.send_output("joint_positions", pa.array(q_current))
+            status = {
+                "is_executing": False,
+                "current_waypoint": 0,
+                "progress": 1.0,
+                "execution_count": execution_count,
+                "total_waypoints": 0,
+            }
+            node.send_output(
+                "execution_status",
+                pa.array(list(json.dumps(status).encode()), type=pa.uint8()),
+            )
             time.sleep(TICK_S)
             continue
 

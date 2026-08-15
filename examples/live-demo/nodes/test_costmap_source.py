@@ -53,5 +53,34 @@ class TestCostmapSource(unittest.TestCase):
             self.assertLessEqual(y, 1.2)
 
 
+class TestUserObjects(unittest.TestCase):
+    def test_user_box_adds_obstacle_blob_at_its_position(self):
+        cm = cs.make_costmap(0.0, [USER_BOX])
+        values = cm["values"]
+        bx, by = round(0.6 / 0.05), round(0.4 / 0.05)
+        self.assertGreaterEqual(values[by * 24 + bx], cs.OBSTACLE_THRESHOLD)
+
+    def test_scene_includes_user_objects(self):
+        scene = cs.make_scene(0.0, [USER_BOX])
+        names = [o["name"] for o in scene["world_objects"]]
+        self.assertIn("user_box", names)
+        self.assertIn("box_obstacle", names)
+
+    def test_apply_scene_command_adds_and_removes(self):
+        objects = cs.apply_scene_command([], {"action": "add", "object": USER_BOX})
+        self.assertEqual(len(objects), 1)
+        objects = cs.apply_scene_command(
+            objects, {"action": "remove", "object": {"name": "user_box"}}
+        )
+        self.assertEqual(objects, [])
 if __name__ == "__main__":
     unittest.main()
+
+USER_BOX = {
+    "name": "user_box",
+    "type": "box",
+    "position": [0.6, 0.4, 0.15],
+    "dimensions": [0.1, 0.1, 0.3],
+}
+
+

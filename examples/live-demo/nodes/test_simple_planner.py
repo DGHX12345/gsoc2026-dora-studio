@@ -99,5 +99,14 @@ class TestPlanPath(unittest.TestCase):
         self.assertTrue(all(i == 2 for i, j in crossings))
 
 
+class TestChooseTarget(unittest.TestCase):
+    def test_console_goal_wins_over_orbit_target(self):
+        self.assertEqual(
+            sp.choose_target((0.4, 0.1), (0.8, 0.9)), (0.4, 0.1)
+        )
+
+    def test_orbit_target_used_when_no_goal(self):
+        self.assertEqual(sp.choose_target(None, (0.8, 0.9)), (0.8, 0.9))
 if __name__ == "__main__":
     unittest.main()
+

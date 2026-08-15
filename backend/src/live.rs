@@ -2,7 +2,7 @@
 //! studio_bridge dora node, served to the frontend LiveFeed poller.
 
 use std::collections::{HashMap, VecDeque};
-use std::sync::RwLock;
+use std::sync::{Mutex, RwLock};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -36,9 +36,98 @@ pub struct RecentResponse {
 #[derive(Debug, Clone, PartialEq)]
 pub struct IngestError(pub String);
 
+pub const MAX_PENDING_COMMANDS: usize = 64;
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct LiveCommand {
+    pub seq: u64,
+    pub kind: String,
+    pub planner: Option<String>,
+    pub target: Option<Vec<f64>>,
+    pub action: Option<String>,
+    pub object: Option<Value>,
+}
+
+pub struct CommandQueue {
+    next_seq: u64,
+    pending: VecDeque<LiveCommand>,
+}
+
+impl CommandQueue {
+    pub fn new() -> Self {
+        Self {
+            // seq starts at 1: consumers poll with since_seq=0 and must
+            // see the very first command (take_since filters seq > since).
+            next_seq: 1,
+            pending: VecDeque::new(),
+        }
+    }
+
+    pub fn push(
+        &mut self,
+        kind: &str,
+        planner: Option<String>,
+        target: Option<Vec<f64>>,
+        action: Option<String>,
+        object: Option<Value>,
+    ) -> Result<LiveCommand, IngestError> {
+        match kind {
+            "plan" => {
+                let len = target.as_ref().map(|t| t.len()).unwrap_or(0);
+                if len < 2 {
+                    return Err(IngestError(
+                        "plan command requires a target of at least [x, y]".to_string(),
+                    ));
+                }
+            }
+            "execute" | "stop" | "auto" => {}
+            "scene" => {
+                if action.is_none() {
+                    return Err(IngestError("scene command requires an action".to_string()));
+                }
+                if object.is_none() {
+                    return Err(IngestError("scene command requires an object".to_string()));
+                }
+            }
+            other => {
+                return Err(IngestError(format!("unknown command kind: {other}")));
+            }
+        }
+        let command = LiveCommand {
+            seq: self.next_seq,
+            kind: kind.to_string(),
+            planner,
+            target,
+            action,
+            object,
+        };
+        self.next_seq += 1;
+        if self.pending.len() >= MAX_PENDING_COMMANDS {
+            self.pending.pop_front();
+        }
+        self.pending.push_back(command.clone());
+        Ok(command)
+    }
+
+    pub fn take_since(&self, since_seq: u64) -> Vec<LiveCommand> {
+        self.pending
+            .iter()
+            .filter(|c| c.seq > since_seq)
+            .cloned()
+            .collect()
+    }
+
+    /// The seq the next pushed command will get. Consumers use it to
+    /// detect a backend restart (their watermark is beyond it).
+    pub fn next_seq_value(&self) -> u64 {
+        self.next_seq
+    }
+}
+
 pub struct LiveFeed {
     streams: RwLock<HashMap<String, VecDeque<LiveFrame>>>,
     stream_order: RwLock<VecDeque<String>>,
+    commands: Mutex<CommandQueue>,
 }
 
 impl LiveFeed {
@@ -46,6 +135,7 @@ impl LiveFeed {
         Self {
             streams: RwLock::new(HashMap::new()),
             stream_order: RwLock::new(VecDeque::new()),
+            commands: Mutex::new(CommandQueue::new()),
         }
     }
 
@@ -108,6 +198,28 @@ impl LiveFeed {
 
     pub fn stream_count(&self) -> usize {
         self.streams.read().unwrap().len()
+    }
+
+    pub fn push_command(
+        &self,
+        kind: &str,
+        planner: Option<String>,
+        target: Option<Vec<f64>>,
+        action: Option<String>,
+        object: Option<Value>,
+    ) -> Result<LiveCommand, IngestError> {
+        self.commands
+            .lock()
+            .unwrap()
+            .push(kind, planner, target, action, object)
+    }
+
+    pub fn take_commands(&self, since_seq: u64) -> Vec<LiveCommand> {
+        self.commands.lock().unwrap().take_since(since_seq)
+    }
+
+    pub fn next_command_seq(&self) -> u64 {
+        self.commands.lock().unwrap().next_seq_value()
     }
 }
 
@@ -220,5 +332,105 @@ mod tests {
         let feed = LiveFeed::new();
         feed.ingest(frame("a", "x", 100, json!(1))).unwrap();
         assert!(feed.recent(Some("b/y"), None, 500).is_empty());
+    }
+
+    #[test]
+    fn command_push_assigns_increasing_seq() {
+        let feed = LiveFeed::new();
+        let c1 = feed
+            .push_command("plan", None, Some(vec![0.5, 0.2]), None, None)
+            .unwrap();
+        let c2 = feed
+            .push_command("execute", None, None, None, None)
+            .unwrap();
+        assert_eq!(c1.seq, 1);
+        assert_eq!(c2.seq, 2);
+    }
+
+    #[test]
+    fn next_seq_tracks_commands_for_restart_detection() {
+        let feed = LiveFeed::new();
+        assert_eq!(feed.next_command_seq(), 1);
+        feed.push_command("execute", None, None, None, None).unwrap();
+        feed.push_command("stop", None, None, None, None).unwrap();
+        assert_eq!(feed.next_command_seq(), 3);
+    }
+
+    #[test]
+    fn first_command_is_visible_to_a_fresh_poller() {
+        // A poller starting at seq 0 must see the very first command —
+        // take_since filters strictly newer seqs, so seq 0 itself is
+        // invisible (regression: the console node lost the first command).
+        let feed = LiveFeed::new();
+        feed.push_command("plan", None, Some(vec![0.5, 0.2]), None, None).unwrap();
+        let commands = feed.take_commands(0);
+        assert_eq!(commands.len(), 1);
+        assert_eq!(commands[0].seq, 1);
+        // and a poller that already saw it gets nothing new
+        assert!(feed.take_commands(1).is_empty());
+    }
+
+    #[test]
+    fn take_commands_returns_only_newer_seq() {
+        let feed = LiveFeed::new();
+        feed.push_command("plan", None, Some(vec![0.1, 0.2]), None, None).unwrap();
+        feed.push_command("execute", None, None, None, None).unwrap();
+        feed.push_command("stop", None, None, None, None).unwrap();
+        let newer = feed.take_commands(2);
+        assert_eq!(newer.len(), 1);
+        assert_eq!(newer[0].kind, "stop");
+        assert_eq!(newer[0].seq, 3);
+    }
+
+    #[test]
+    fn take_commands_is_empty_without_new_commands() {
+        let feed = LiveFeed::new();
+        feed.push_command("execute", None, None, None, None).unwrap();
+        assert_eq!(feed.take_commands(0).len(), 1);
+        assert!(feed.take_commands(1).is_empty());
+        assert!(feed.take_commands(5).is_empty());
+    }
+
+    #[test]
+    fn command_queue_caps_pending_commands() {
+        let feed = LiveFeed::new();
+        for i in 0..(MAX_PENDING_COMMANDS + 10) {
+            feed.push_command("execute", None, None, None, None).unwrap();
+        }
+        let all = feed.take_commands(0);
+        assert_eq!(all.len(), MAX_PENDING_COMMANDS);
+        assert_eq!(all[0].seq, 11, "oldest commands evicted");
+    }
+
+    #[test]
+    fn plan_command_requires_target() {
+        let feed = LiveFeed::new();
+        assert!(feed.push_command("plan", None, None, None, None).is_err());
+        assert!(feed.push_command("plan", None, Some(vec![0.5]), None, None).is_err());
+        assert!(feed.push_command("plan", None, Some(vec![0.5, 0.2]), None, None).is_ok());
+    }
+
+    #[test]
+    fn scene_command_requires_action_and_object() {
+        let feed = LiveFeed::new();
+        assert!(feed.push_command("scene", None, None, None, None).is_err());
+        assert!(feed
+            .push_command("scene", None, None, Some("add".into()), None)
+            .is_err());
+        assert!(feed
+            .push_command(
+                "scene",
+                None,
+                None,
+                Some("add".into()),
+                Some(json!({"name": "box1", "type": "box"})),
+            )
+            .is_ok());
+    }
+
+    #[test]
+    fn unknown_command_kind_is_rejected() {
+        let feed = LiveFeed::new();
+        assert!(feed.push_command("explode", None, None, None, None).is_err());
     }
 }

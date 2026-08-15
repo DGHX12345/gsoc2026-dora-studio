@@ -76,5 +76,14 @@ class TestPlanSamples(unittest.TestCase):
         self.assertEqual(len(envelope["waypoints"][0]), 7)
 
 
+class TestParseExecuteCommand(unittest.TestCase):
+    def test_parses_execute_and_stop(self):
+        self.assertEqual(te.parse_execute_command({"command": "execute"}), "execute")
+        self.assertEqual(te.parse_execute_command({"command": "stop"}), "stop")
+
+    def test_rejects_unknown_commands(self):
+        self.assertIsNone(te.parse_execute_command({"command": "fly"}))
+        self.assertIsNone(te.parse_execute_command("stop"))
 if __name__ == "__main__":
     unittest.main()
+

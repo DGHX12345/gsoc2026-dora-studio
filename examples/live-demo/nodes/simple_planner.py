@@ -36,6 +36,12 @@ def cost_at(values, width, i, j):
     return 1.0 + values[i * width + j] / 50.0
 
 
+def choose_target(goal, orbit):
+    """B6: the console goal overrides the orbiting demo target until the
+    console sends `auto` (goal cleared back to None)."""
+    return goal if goal is not None else orbit
+
+
 def plan_path(width, height, resolution, values, start_xy, goal_xy):
     """A* over the cost grid. World-coordinate in, world waypoints out;
     None when no path exists."""
@@ -104,7 +110,8 @@ def plan_path_with_stats(width, height, resolution, values, start_xy, goal_xy):
 def main():
     node = Node()
     costmap = None
-    target = None
+    orbit_target = None
+    goal = None
     plan_id = 0
     while True:
         event = node.try_recv()
@@ -128,8 +135,17 @@ def main():
             if value is not None:
                 arr = value.to_pylist()
                 if len(arr) >= 2:
-                    target = (float(arr[0]), float(arr[1]))
+                    orbit_target = (float(arr[0]), float(arr[1]))
+        elif event["id"] == "goal":
+            value = event.get("value")
+            if value is not None:
+                arr = value.to_pylist()
+                if len(arr) >= 2:
+                    goal = (float(arr[0]), float(arr[1]))
+        elif event["id"] == "resume":
+            goal = None
 
+        target = choose_target(goal, orbit_target)
         if costmap is None or target is None:
             continue
 

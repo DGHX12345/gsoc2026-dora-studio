@@ -150,6 +150,8 @@ async fn main() {
         .route("/api/lerobot/attribution", post(lerobot_attribution))
         .route("/api/live/ingest", post(live_ingest))
         .route("/api/live/recent", get(live_recent))
+        .route("/api/live/command", post(live_command))
+        .route("/api/live/command", get(live_command_queue))
         .with_state(state)
         .layer(CorsLayer::permissive());
 
@@ -1041,6 +1043,43 @@ async fn live_recent(
         .min(live::MAX_FRAME_LIMIT);
     let frames = state.live.recent(q.stream.as_deref(), q.since_ts, limit);
     Json(live::RecentResponse { frames })
+}
+
+#[derive(serde::Deserialize)]
+struct LiveCommandRequest {
+    kind: String,
+    planner: Option<String>,
+    target: Option<Vec<f64>>,
+    action: Option<String>,
+    object: Option<serde_json::Value>,
+}
+
+#[derive(serde::Deserialize)]
+struct LiveCommandQueueQuery {
+    since_seq: Option<u64>,
+}
+
+async fn live_command(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<LiveCommandRequest>,
+) -> Result<Json<live::LiveCommand>, ApiError> {
+    state
+        .live
+        .push_command(&req.kind, req.planner, req.target, req.action, req.object)
+        .map(Json)
+        .map_err(|e| ApiError {
+            status: StatusCode::BAD_REQUEST,
+            message: e.0,
+        })
+}
+
+async fn live_command_queue(
+    State(state): State<Arc<AppState>>,
+    Query(q): Query<LiveCommandQueueQuery>,
+) -> Json<serde_json::Value> {
+    let commands = state.live.take_commands(q.since_seq.unwrap_or(0));
+    let next_seq = state.live.next_command_seq();
+    Json(serde_json::json!({ "commands": commands, "next_seq": next_seq }))
 }
 
 // --- Metrics API (M07) ---

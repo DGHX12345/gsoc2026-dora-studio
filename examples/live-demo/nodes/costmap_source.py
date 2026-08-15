@@ -26,14 +26,27 @@ def obstacle_xy(t):
     return (0.30 + 0.05 * math.sin(t / 20.0), 0.08 * math.cos(t / 25.0))
 
 
-def make_costmap(t):
+def make_costmap(t, user_objects=None):
     x0, y0 = obstacle_xy(t)
     cx, cy = round(x0 / RESOLUTION), round(y0 / RESOLUTION)
+    blobs = [(cx, cy, 8.0)]
+    for obj in user_objects or []:
+        position = obj.get("position") or [0, 0, 0]
+        blobs.append(
+            (
+                round(position[0] / RESOLUTION),
+                round(position[1] / RESOLUTION),
+                3.0,
+            )
+        )
     values = []
     for i in range(GRID):
         for j in range(GRID):
-            d2 = (j - cx) ** 2 + (i - cy) ** 2
-            values.append(round(100.0 * math.exp(-d2 / 8.0), 1))
+            value = 0.0
+            for bx, by, sigma2 in blobs:
+                d2 = (j - bx) ** 2 + (i - by) ** 2
+                value = max(value, 100.0 * math.exp(-d2 / sigma2))
+            values.append(round(value, 1))
     return {
         "width": GRID,
         "height": GRID,
@@ -42,21 +55,43 @@ def make_costmap(t):
     }
 
 
-def make_scene(t):
+def make_scene(t, user_objects=None):
     x, y = obstacle_xy(t)
+    world_objects = [
+        {
+            "name": "box_obstacle",
+            "type": "box",
+            "position": [round(x, 3), round(y, 3), 0.15],
+            "dimensions": [0.10, 0.10, 0.30],
+        }
+    ]
+    for obj in user_objects or []:
+        world_objects.append(
+            {
+                "name": obj.get("name", "user_object"),
+                "type": obj.get("type", "box"),
+                "position": obj.get("position", [0.0, 0.0, 0.15]),
+                "dimensions": obj.get("dimensions", [0.10, 0.10, 0.30]),
+            }
+        )
     return {
         "version": int(t),
-        "world_objects": [
-            {
-                "name": "box_obstacle",
-                "type": "box",
-                "position": [round(x, 3), round(y, 3), 0.15],
-                "dimensions": [0.10, 0.10, 0.30],
-            }
-        ],
+        "world_objects": world_objects,
         "attached_objects": [],
         "robot_state": {"joint_positions": [], "gripper_state": 0},
     }
+
+
+def apply_scene_command(user_objects, command):
+    """B6: add/remove user objects; returns the updated list."""
+    action = command.get("action")
+    obj = command.get("object") or {}
+    if action == "add" and obj.get("name"):
+        return [o for o in user_objects if o.get("name") != obj.get("name")] + [obj]
+    if action == "remove":
+        name = obj.get("name")
+        return [o for o in user_objects if o.get("name") != name]
+    return user_objects
 
 
 def target_xy(t):
@@ -70,20 +105,35 @@ def target_xy(t):
 
 def main():
     node = Node()
+    user_objects = []
     t0 = time.time()
     while True:
         event = node.try_recv()
         if event is not None and event.get("type") == "STOP":
             break
+        if event is not None and event.get("type") == "INPUT" and event["id"] == "scene":
+            value = event.get("value")
+            if value is not None:
+                try:
+                    command = json.loads(bytes(value.to_pylist()).decode("utf-8"))
+                    user_objects = apply_scene_command(user_objects, command)
+                except (UnicodeDecodeError, json.JSONDecodeError):
+                    pass
         t = time.time() - t0
 
         node.send_output(
             "costmap",
-            pa.array(list(json.dumps(make_costmap(t)).encode()), type=pa.uint8()),
+            pa.array(
+                list(json.dumps(make_costmap(t, user_objects)).encode()),
+                type=pa.uint8(),
+            ),
         )
         node.send_output(
             "scene_update",
-            pa.array(list(json.dumps(make_scene(t)).encode()), type=pa.uint8()),
+            pa.array(
+                list(json.dumps(make_scene(t, user_objects)).encode()),
+                type=pa.uint8(),
+            ),
         )
         x, y = target_xy(t)
         node.send_output("target_point", pa.array([x, y, 0.30]))
