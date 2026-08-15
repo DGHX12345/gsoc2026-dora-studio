@@ -136,6 +136,13 @@ type Messages = {
     statusOff: string
     statusOn: string
   }
+  liveFeed: {
+    label: string
+    off: string
+    on: string
+    error: string
+    hint: string
+  }
 }
 
 const messages: Record<Locale, Messages> = {
@@ -276,6 +283,13 @@ const messages: Record<Locale, Messages> = {
       statusOff: '已关闭',
       statusOn: '采集中',
     },
+    liveFeed: {
+      label: '实时数据',
+      off: '已关闭',
+      on: '接收中',
+      error: '后端不可达',
+      hint: '通过 studio_bridge 节点接收运行中 dataflow 的实时端口数据',
+    },
   },
   en: {
     app: {
@@ -413,6 +427,13 @@ const messages: Record<Locale, Messages> = {
       enable: 'Enable',
       statusOff: 'off',
       statusOn: 'collecting',
+    },
+    liveFeed: {
+      label: 'Live Feed',
+      off: 'off',
+      on: 'receiving',
+      error: 'backend unreachable',
+      hint: 'Receive live port data from a running dataflow via the studio_bridge node',
     },
   },
 }

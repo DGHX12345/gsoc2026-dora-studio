@@ -22,6 +22,9 @@ export interface ToolPayload {
   f32?: Float32Array;
   json?: unknown;
   bytes?: Uint8Array;
+  /** M15 B4: live frames carry the sender's per-send dora metadata
+   * (e.g. num_waypoints/num_joints). Absent in .drec replay. */
+  metadata?: Record<string, unknown>;
 }
 
 export interface ToolBatch {

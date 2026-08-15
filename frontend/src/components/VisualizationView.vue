@@ -109,6 +109,13 @@
           :class="['pill', viewportMode === 'live' ? 'success' : 'info']"
           @click="viewportMode = viewportMode === 'live' ? 'replay' : 'live'"
         >{{ viewportMode === 'live' ? 'Live' : 'Replay' }}</button>
+        <!-- M15 B4: live feed toggle (opt-in, default off; live mode only) -->
+        <button
+          v-if="viewportMode === 'live'"
+          :class="['pill', liveFeedStatus === 'running' ? 'success' : liveFeedStatus === 'error' ? 'failed' : '']"
+          :title="t.liveFeed.hint"
+          @click="toggleLiveFeed"
+        >{{ t.liveFeed.label }}: {{ liveFeedLabel }}</button>
         <!-- M11: tool slot panel toggle -->
         <button
           :class="['pill', toolsPanelOpen ? 'success' : '']"
@@ -182,8 +189,10 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
-import { BACKEND_BASE_URL, getDataflowGraph, getDataflows, getDvizDisplays, getDvizSnapshot, getDvizStatus, getDvizTopics, getRecordingStreams, getRobotProfile, openRecording, type ApiResult, type ApiSource, type DvizDisplayResponse, type DvizDisplaysResponse, type DvizSnapshotResponse, type DvizStatusResponse, type DvizTopicResponse, type DvizTopicsResponse, type RobotModuleResponse, type RobotProfileResponse } from '../api'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { BACKEND_BASE_URL, getDataflowGraph, getDataflows, getDvizDisplays, getDvizSnapshot, getDvizStatus, getDvizTopics, getLiveRecent, getRecordingStreams, getRobotProfile, openRecording, type ApiResult, type ApiSource, type DvizDisplayResponse, type DvizDisplaysResponse, type DvizSnapshotResponse, type DvizStatusResponse, type DvizTopicResponse, type DvizTopicsResponse, type RobotModuleResponse, type RobotProfileResponse } from '../api'
+import { useI18n } from '../i18n'
+import { defaultSinceTs, LiveFeedEngine, type LiveFeedStatus } from '../live-feed'
 import { buildNanoArmModelResources, createNanoArmJointState } from '../lib/nanoArmModel'
 import { PlaybackEngine } from '../playback'
 import { ReplayScene, type RobotJointState, type RobotBasePose } from '../replay-scene'
@@ -405,6 +414,43 @@ const sidebarCollapsed = ref(false)
 
 // --- M06: Live/Replay toggle ---
 const viewportMode = ref<'live' | 'replay'>('live')
+
+// --- M15 B4: live feed (opt-in polling of /api/live/recent) ---
+const { t } = useI18n()
+const liveFeedEngine = ref<LiveFeedEngine | null>(null)
+const liveFeedStatus = ref<LiveFeedStatus>('stopped')
+const liveFeedLabel = computed(() => {
+  if (liveFeedStatus.value === 'running') return t.value.liveFeed.on
+  if (liveFeedStatus.value === 'error') return t.value.liveFeed.error
+  return t.value.liveFeed.off
+})
+
+function stopLiveFeed() {
+  liveFeedEngine.value?.stop()
+  liveFeedEngine.value = null
+  liveFeedStatus.value = 'stopped'
+}
+
+function toggleLiveFeed() {
+  if (liveFeedEngine.value) {
+    stopLiveFeed()
+    return
+  }
+  const engine = new LiveFeedEngine(
+    async (sinceTs) => (await getLiveRecent(sinceTs)).frames,
+    (batch, tf) => toolRegistry.broadcastBatch(batch, tf),
+    100,
+    defaultSinceTs(Date.now() * 1_000_000),
+  )
+  engine.subscribe(() => { liveFeedStatus.value = engine.status })
+  liveFeedEngine.value = engine
+  engine.start()
+}
+
+// Live data must not leak into replay mode: leaving Live stops the feed.
+watch(viewportMode, (mode) => {
+  if (mode !== 'live') stopLiveFeed()
+})
 const replayPath = ref('/tmp/dora-studio-tests/joint_animation.drec')
 const replayActive = ref(false)
 const replayRecordingId = ref('')
@@ -801,6 +847,7 @@ onMounted(() => {
 onBeforeUnmount(() => {
   registryUnsubscribeNano?.()
   registryUnsubscribeNano = null
+  stopLiveFeed()
   // Tools hold scene objects owned by this viewport instance
   for (const tool of toolRegistry.list()) {
     toolRegistry.detachFromScene(tool.id)

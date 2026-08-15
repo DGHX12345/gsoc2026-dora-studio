@@ -791,3 +791,28 @@ export function getOtelSpans(node?: string, limit = 200) {
 export function getOtelTrace(traceId: string) {
   return fetchJson<SpanNodeResponse[]>(`/otel/trace/${encodeURIComponent(traceId)}`)
 }
+
+// --- Live API (M15 B3) ---
+
+export type LiveFrame = {
+  node_id: string
+  output_id: string
+  timestamp: number
+  payload: {
+    values?: number[]
+    json?: unknown
+    bytes_base64?: string
+    metadata?: Record<string, unknown>
+  }
+}
+
+export type LiveRecentResponse = {
+  frames: LiveFrame[]
+}
+
+export function getLiveRecent(sinceTs: number, limit = 500) {
+  const qs = new URLSearchParams()
+  qs.set('since_ts', String(sinceTs))
+  qs.set('limit', String(limit))
+  return fetchJson<LiveRecentResponse>(`/live/recent?${qs.toString()}`)
+}
