@@ -69,6 +69,9 @@ const tests: TestCase[] = [
       );
       // Without a description/ segment, the package name alone is stripped
       assert.equal(remapPackagePath('package://some_pkg/meshes/a.STL'), 'meshes/a.STL');
+      // Package names ending in _description (robot_descriptions style)
+      // strip through the description segment too
+      assert.equal(remapPackagePath('package://ur_description/meshes/ur5e/base.stl'), 'meshes/ur5e/base.stl');
       // Plain relative paths pass through untouched
       assert.equal(remapPackagePath('meshes_b601_gripper/link1.STL'), 'meshes_b601_gripper/link1.STL');
     },

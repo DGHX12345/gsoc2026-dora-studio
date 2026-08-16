@@ -643,6 +643,29 @@ const tests: TestCase[] = [
     },
   },
   {
+    name: 'setRobot reloads the model when a different robot is selected',
+    run: async () => {
+      const loads: string[] = [];
+      const loader: ModelLoader = async (robotId) => {
+        loads.push(robotId);
+        return buildRobotModel(parseUrdf(CHAIN_URDF));
+      };
+      const catalog = async () => [
+        { id: 'b601', urdfPath: '/models/b601/x.urdf', meshBasePath: '/models/b601/' },
+        { id: 'ur5e', urdfPath: '/models/ur5e/x.urdf', meshBasePath: '/models/ur5e/' },
+      ];
+      const tool = new MoveItTool(loader, catalog);
+      tool.onAttach(makeContext());
+      await flush();
+      assert.deepEqual(loads, ['b601']); // auto-load on attach
+      tool.setRobot('ur5e');
+      await flush();
+      assert.deepEqual(loads, ['b601', 'ur5e']); // the switch must reload
+      assert.equal(tool.getSnapshot().robotState, 'loaded');
+      assert.equal(tool.getSnapshot().robotId, 'ur5e');
+    },
+  },
+  {
     name: 'unloadRobot falls back to the chart and restores the nano display contract',
     run: async () => {
       const tool = new MoveItTool(chainLoader, stubCatalog);

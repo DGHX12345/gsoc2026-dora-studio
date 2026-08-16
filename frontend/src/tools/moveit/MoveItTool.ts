@@ -417,9 +417,12 @@ export class MoveItTool implements ViewportTool {
    * for flat trajectory reshaping (D3 config), and loads the matching
    * URDF when a local model exists. */
   setRobot(robotId: string | null) {
+    // Capture the loaded id BEFORE overwriting robotId — the guard must
+    // compare against the previously loaded model, not the new selection.
+    const previouslyLoaded = this.loadedModelRobotId();
     this.robotId = robotId;
     this.notify();
-    if (robotId && this.loadedModelRobotId() !== robotId) {
+    if (robotId && previouslyLoaded !== robotId) {
       void this.loadRobot(robotId);
     }
   }
