@@ -132,6 +132,38 @@ class TestReplanKey(unittest.TestCase):
         self.assertIn((0, 0), cells)
         self.assertNotIn((5, 5), cells)
 
+class TestSmoothPath(unittest.TestCase):
+    def _world(self, cells, res=0.05):
+        return [[round(j * res, 4), round(i * res, 4)] for i, j in cells]
+
+    def test_straight_staircase_collapses_to_two_points(self):
+        values = [0.0] * (W * H)
+        raw = self._world([(1, 1), (2, 2), (3, 3), (4, 4), (5, 5)])
+        smoothed = sp.smooth_path(raw, values, W, H, RES)
+        self.assertEqual(smoothed, [raw[0], raw[-1]])
+
+    def test_wall_detour_survives_smoothing(self):
+        values = grid_with_wall()
+        path = sp.plan_path(W, H, RES, values, (0.05, 0.05), (0.9, 0.05))
+        self.assertIsNotNone(path)
+        smoothed = sp.smooth_path(path, values, W, H, RES)
+        self.assertEqual(smoothed[0], path[0])
+        self.assertEqual(smoothed[-1], path[-1])
+        # every smoothed segment must stay clear of obstacles
+        for p1, p2 in zip(smoothed, smoothed[1:]):
+            cells = sp.segment_cells(p1, p2, RES)
+            for i, j in cells:
+                self.assertFalse(sp.is_obstacle(values, W, H, i, j))
+        # and it must still cross the wall column through the gap
+        crossed = [p for p in smoothed if abs(p[0] - 10 * RES) < 1e-9]
+        self.assertGreater(len(crossed), 0)
+
+    def test_two_point_path_unchanged(self):
+        values = [0.0] * (W * H)
+        raw = self._world([(1, 1), (5, 1)])
+        self.assertEqual(sp.smooth_path(raw, values, W, H, RES), raw)
 if __name__ == "__main__":
     unittest.main()
+
+
 

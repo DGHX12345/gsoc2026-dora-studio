@@ -48,6 +48,53 @@ def obstacle_cells(values, width, height):
     )
 
 
+def segment_cells(p1, p2, resolution):
+    """All cells a straight world-space segment passes through."""
+    i1, j1 = round(p1[1] / resolution), round(p1[0] / resolution)
+    i2, j2 = round(p2[1] / resolution), round(p2[0] / resolution)
+    steps = max(abs(i2 - i1), abs(j2 - j1))
+    if steps == 0:
+        return [(i1, j1)]
+    cells = []
+    for k in range(steps + 1):
+        cells.append(
+            (round(i1 + (i2 - i1) * k / steps), round(j1 + (j2 - j1) * k / steps))
+        )
+    return cells
+
+
+def line_of_sight(values, width, height, p1, p2, resolution):
+    """True when the straight segment between two world points crosses
+    no obstacle cells."""
+    return all(
+        not is_obstacle(values, width, height, i, j)
+        for i, j in segment_cells(p1, p2, resolution)
+    )
+
+
+def smooth_path(world_path, values, width, height, resolution):
+    """Greedy line-of-sight simplification: collapse grid staircases
+    into straight segments while never cutting through obstacles."""
+    if len(world_path) <= 2:
+        return world_path
+    cells = [
+        (round(p[1] / resolution), round(p[0] / resolution)) for p in world_path
+    ]
+    smoothed = [cells[0]]
+    idx = 1
+    while idx < len(cells):
+        end = idx
+        while end + 1 < len(cells) and line_of_sight(
+            values, width, height, world_path[len(smoothed) - 1], world_path[end + 1], resolution
+        ):
+            end += 1
+        smoothed.append(cells[end])
+        idx = end + 1
+    return [
+        [round(j * resolution, 4), round(i * resolution, 4)] for i, j in smoothed
+    ]
+
+
 def replan_key(target, cells):
     """B6: dedupe key — replan only when the target or the obstacle
     layout actually changed (no more per-tick replan spam)."""
@@ -199,6 +246,9 @@ def main():
             )
             continue
 
+        path = smooth_path(
+            path, costmap["values"], costmap["width"], costmap["height"], float(costmap["resolution"])
+        )
         waypoints = []
         for x, y in path:
             waypoints.extend([x, y, PATH_Z])

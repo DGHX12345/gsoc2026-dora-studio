@@ -610,6 +610,10 @@ async function loadAndRenderModel() {
   applyBasePose()
   frameCameraToModel()
   applyJointValues()
+  // Hidden mounts (v-show pages) size to 0 and syncRendererSize bails
+  // out without requesting a render — ask for one unconditionally so
+  // the first visible frame always draws the model.
+  requestRender()
 
   viewerState.value = 'ready'
   viewerMessage.value = 'Loaded nano_full.xml from backend models.'
