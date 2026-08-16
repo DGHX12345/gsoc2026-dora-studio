@@ -16,6 +16,7 @@ from moveit_console import (
     build_scene_command,
     parse_ik_solution,
     parse_target,
+    plan_ready,
 )
 
 
@@ -69,6 +70,23 @@ class TestRequestBuilders(unittest.TestCase):
         self.assertEqual(build_gate_command("execute"), {"command": "execute"})
         self.assertEqual(build_gate_command("stop"), {"command": "stop"})
         self.assertEqual(build_gate_command("auto"), {"command": "auto"})
+
+
+class TestPlanReady(unittest.TestCase):
+    def test_waits_for_both_inputs(self):
+        self.assertIsNone(plan_ready(None, [1.0] * 6))
+        self.assertIsNone(plan_ready([0.0] * 6, None))
+        self.assertIsNone(plan_ready(None, None))
+
+    def test_builds_request_once_both_present(self):
+        req = plan_ready([0.1] * 6, [1.0] * 6)
+        self.assertIsNotNone(req)
+        self.assertEqual(req["start"], [0.1] * 6)
+        self.assertEqual(req["goal"], [1.0] * 6)
+
+    def test_truncates_long_solutions_to_six_joints(self):
+        req = plan_ready([0.0] * 6, [1.0] * 7)
+        self.assertEqual(req["goal"], [1.0] * 6)
 
 
 class TestParseIkSolution(unittest.TestCase):

@@ -67,6 +67,14 @@ def build_gate_command(kind):
     return {"command": kind}
 
 
+def plan_ready(current_joints, solution):
+    """plan_request when both the joint state and the IK solution are
+    present; None while either is still missing."""
+    if current_joints is None or solution is None:
+        return None
+    return build_plan_request(current_joints, solution[:6])
+
+
 def parse_ik_solution(payload):
     """Array payload -> list of joint angles (at least 6), else None."""
     try:
@@ -103,7 +111,7 @@ def main():
     )
 
     current_joints = None
-    pending_target = None
+    pending_solution = None
     since_seq = 0
 
     while True:
@@ -118,16 +126,24 @@ def main():
                         current_joints = event["value"].to_numpy().tolist()
                     except Exception:
                         pass
+                    request = plan_ready(current_joints, pending_solution)
+                    if request is not None:
+                        send_json(node, "plan_request", request)
+                        pending_solution = None
+                        print(f"[Console] plan_request sent: goal={request['goal'][:3]}...")
                 elif input_id == "ik_solution":
                     solution = parse_ik_solution(event["value"])
                     if solution is None:
                         print("[Console] Invalid ik_solution payload, skipped")
-                    elif current_joints is None:
-                        print("[Console] No joint state yet, plan skipped")
                     else:
-                        request = build_plan_request(current_joints, solution[:6])
-                        send_json(node, "plan_request", request)
-                        print(f"[Console] plan_request sent: goal={solution[:3]}...")
+                        pending_solution = solution
+                        request = plan_ready(current_joints, solution)
+                        if request is not None:
+                            send_json(node, "plan_request", request)
+                            pending_solution = None
+                            print(f"[Console] plan_request sent: goal={request['goal'][:3]}...")
+                        else:
+                            print("[Console] IK solved; waiting for joint state")
                 elif input_id == "ik_status":
                     pass  # informational only
 
