@@ -191,7 +191,8 @@ impl LiveFeed {
                 frames.push(frame.clone());
             }
         }
-        frames.sort_by_key(|f| f.timestamp);
+        // Newest first: limit keeps the freshest frames, not the oldest.
+        frames.sort_by_key(|f| std::cmp::Reverse(f.timestamp));
         frames.truncate(limit);
         frames
     }
@@ -279,22 +280,33 @@ mod tests {
         }
         let frames = feed.recent(Some("a/x"), None, MAX_FRAME_LIMIT);
         assert_eq!(frames.len(), PER_STREAM_CAPACITY);
-        assert_eq!(frames[0].timestamp, 11);
         assert_eq!(
-            frames.last().unwrap().timestamp,
+            frames[0].timestamp,
             (PER_STREAM_CAPACITY + 10) as u64
         );
+        assert_eq!(frames.last().unwrap().timestamp, 11);
     }
 
     #[test]
-    fn recent_merges_streams_sorted_by_timestamp() {
+    fn recent_merges_streams_newest_first() {
         let feed = LiveFeed::new();
         feed.ingest(frame("b", "y", 300, json!(1))).unwrap();
         feed.ingest(frame("a", "x", 100, json!(2))).unwrap();
         feed.ingest(frame("a", "x", 200, json!(3))).unwrap();
         let frames = feed.recent(None, None, 500);
         let ts: Vec<u64> = frames.iter().map(|f| f.timestamp).collect();
-        assert_eq!(ts, vec![100, 200, 300]);
+        assert_eq!(ts, vec![300, 200, 100]);
+    }
+
+    #[test]
+    fn recent_limit_keeps_the_newest_frames() {
+        let feed = LiveFeed::new();
+        feed.ingest(frame("a", "x", 100, json!(1))).unwrap();
+        feed.ingest(frame("a", "x", 200, json!(2))).unwrap();
+        feed.ingest(frame("a", "x", 300, json!(3))).unwrap();
+        let frames = feed.recent(Some("a/x"), None, 2);
+        let ts: Vec<u64> = frames.iter().map(|f| f.timestamp).collect();
+        assert_eq!(ts, vec![300, 200]);
     }
 
     #[test]
@@ -305,7 +317,7 @@ mod tests {
         }
         let frames = feed.recent(None, None, 3);
         assert_eq!(frames.len(), 3);
-        assert_eq!(frames[0].timestamp, 1);
+        assert_eq!(frames[0].timestamp, 10);
     }
 
     #[test]
