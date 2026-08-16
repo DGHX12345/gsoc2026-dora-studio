@@ -9,3 +9,5 @@ examples/**/out/
 *.log
 .DS_Store
 models/b601/
+models/ur5e/
+examples/moveit-live-demo/models/

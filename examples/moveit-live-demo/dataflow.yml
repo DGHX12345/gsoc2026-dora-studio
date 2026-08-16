@@ -1,0 +1,131 @@
+# M15 Phase C — live planning + mujoco physics mirror demo.
+#
+# REAL: the dora-moveit2 planner (collision-checked RRT) plans ur5e arm
+# trajectories around scene obstacles, the gated executor drives
+# dora-mujoco (ur5e, 21-dim qpos: ball freejoint 7 + arm 6 + gripper 8),
+# and physics-accurate joint_positions flow through studio_bridge into
+# the Studio viewport (>=20Hz with the 50ms live feed).
+# DEMO (labeled): arm_joints slices the arm qpos[7:13] for every arm
+# consumer; the raw mujoco stream stays available as joint_positions_raw.
+#
+# Console (Motion Planner page): plan targets are [x y z] or
+# [x y z roll pitch yaw] (meters/rad); Plan plans once (IK + RRT),
+# Execute runs the held trajectory, Stop returns HOME, Auto auto-executes
+# new plans, scene adds/removes planning-scene obstacles.
+#
+# Setup (one time):
+#   source /home/dora/.venvs/dora-studio/bin/activate
+#   dora up          (skip if the coordinator is already running)
+#   cd examples/moveit-live-demo && dora start dataflow.yml --name moveit-live
+# Then in Studio: Visualization -> Live -> enable Live Feed -> mount the
+# MoveIt tool -> pick the ur5e model (models/ur5e/ must exist locally;
+# copy the URDF + meshes from robot_descriptions' ur_description cache).
+#
+# Tests (from examples/moveit-live-demo/nodes):
+#   /home/dora/.venvs/dora-studio/bin/python -m unittest \
+#     test_moveit_console test_gated_executor test_arm_joints
+
+nodes:
+  - id: mujoco_sim
+    path: dora-mujoco
+    inputs:
+      tick: dora/timer/millis/10
+      control_input: gated_executor/joint_commands
+    outputs:
+      - joint_positions
+      - joint_velocities
+      - actuator_controls
+      - sensor_data
+    env:
+      MODEL_NAME: models/ur5e.xml
+      MUJOCO_GL: "glfw"
+
+  - id: arm_joints
+    path: nodes/arm_joints.py
+    inputs:
+      joint_positions_raw: mujoco_sim/joint_positions
+    outputs:
+      - joint_positions
+    env:
+      ARM_JOINT_START: 7
+
+  - id: planning_scene
+    path: nodes/planning_scene.py
+    inputs:
+      robot_state: arm_joints/joint_positions
+      scene_command: moveit_console/scene_command
+      tick: dora/timer/millis/5000
+    outputs:
+      - scene_update
+      - command_result
+    env:
+      ROBOT_CONFIG_MODULE: "moveit_live_demo.config.ur5e"
+
+  - id: planner
+    path: nodes/planner.py
+    inputs:
+      plan_request: moveit_console/plan_request
+      scene_update: planning_scene/scene_update
+    outputs:
+      - trajectory
+      - plan_status
+    env:
+      ROBOT_CONFIG_MODULE: "moveit_live_demo.config.ur5e"
+
+  - id: ik_solver
+    path: nodes/ik_solver.py
+    inputs:
+      ik_request: moveit_console/ik_request
+      joint_state: arm_joints/joint_positions
+    outputs:
+      - ik_solution
+      - ik_status
+    env:
+      ROBOT_CONFIG_MODULE: "moveit_live_demo.config.ur5e"
+
+  - id: gated_executor
+    path: nodes/gated_trajectory_executor.py
+    inputs:
+      trajectory: planner/trajectory
+      joint_positions: arm_joints/joint_positions
+      execute_command: moveit_console/execute_command
+      stop_command: moveit_console/stop_command
+      resume_command: moveit_console/resume_command
+      tick: dora/timer/millis/50
+    outputs:
+      - joint_commands
+      - execution_status
+    env:
+      ROBOT_CONFIG_MODULE: "moveit_live_demo.config.ur5e"
+
+  - id: moveit_console
+    path: nodes/moveit_console.py
+    inputs:
+      joint_positions: arm_joints/joint_positions
+      ik_solution: ik_solver/ik_solution
+      ik_status: ik_solver/ik_status
+    outputs:
+      - target_point
+      - plan_request
+      - ik_request
+      - execute_command
+      - stop_command
+      - resume_command
+      - scene_command
+    env:
+      STUDIO_BACKEND_URL: http://127.0.0.1:3001/api/live/ingest
+
+  - id: studio_bridge
+    path: ../../backend/scripts/studio_bridge.py
+    inputs:
+      joint_positions: arm_joints/joint_positions
+      joint_velocities: mujoco_sim/joint_velocities
+      joint_commands: gated_executor/joint_commands
+      execution_status: gated_executor/execution_status
+      trajectory: planner/trajectory
+      plan_status: planner/plan_status
+      scene_update: planning_scene/scene_update
+      ik_solution: ik_solver/ik_solution
+      ik_status: ik_solver/ik_status
+    env:
+      STUDIO_BACKEND_URL: http://127.0.0.1:3001/api/live/ingest
