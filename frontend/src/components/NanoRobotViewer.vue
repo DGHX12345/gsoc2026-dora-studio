@@ -599,7 +599,7 @@ async function loadAndRenderModel() {
 
   modelRoot = new THREE.Group()
   modelRoot.name = 'nano-full-root'
-  modelRoot.visible = props.modelVisible ?? true
+  modelRoot.visible = props.modelVisible !== false
   scene.add(modelRoot)
 
   for (const rootBody of model.rootBodies) {
@@ -642,7 +642,7 @@ watch(
 watch(
   () => props.modelVisible,
   () => {
-    if (modelRoot) modelRoot.visible = props.modelVisible ?? true
+    if (modelRoot) modelRoot.visible = props.modelVisible !== false
     requestRender()
   },
 )
@@ -692,6 +692,18 @@ onBeforeUnmount(() => {
 defineExpose({
   getScene: () => scene,
   getCamera: () => camera,
+  getDebugInfo: () => ({
+    cameraPos: camera ? [camera.position.x.toFixed(2), camera.position.y.toFixed(2), camera.position.z.toFixed(2)] : null,
+    cameraTarget: controls ? [controls.target.x.toFixed(2), controls.target.y.toFixed(2), controls.target.z.toFixed(2)] : null,
+    aspect: camera ? Number(camera.aspect.toFixed(2)) : null,
+    canvasAttr: canvasRef.value ? `${canvasRef.value.width}x${canvasRef.value.height}` : null,
+    containerSize: viewportRef.value ? `${viewportRef.value.clientWidth}x${viewportRef.value.clientHeight}` : null,
+    modelChildren: modelRoot ? modelRoot.children.length : -1,
+    modelVisible: modelRoot ? modelRoot.visible : null,
+    modelVisibleProp: String(props.modelVisible),
+    sceneChildren: scene ? scene.children.length : -1,
+    renderCalls: renderer ? renderer.info.render.calls : -1,
+  }),
   requestRender,
   // M12 R5: snap the view to a world-space center + radius. Syncs the
   // OrbitControls target so the framing survives the next user drag; falls

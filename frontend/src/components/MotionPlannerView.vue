@@ -85,14 +85,18 @@
         </div>
         <div class="mujoco-mirror-card">
           <NanoRobotViewer
+            ref="mirrorViewer"
             :xml-url="nanoArmResources.xmlUrl"
             :asset-base-url="nanoArmResources.assetBaseUrl"
             :joint-values="nanoArmJointState"
             :base-pose="nanoRobotBasePose"
             viewer-label="Nano full arm planning preview"
+            :model-visible="true"
             @loaded="updateNanoArmJointOrder"
           />
           <div class="mujoco-mirror-details" :title="nanoArmResources.xmlUrl">
+            <!-- TEMP DEBUG (M15 B6 mirror diagnosis) -->
+            <pre class="mirror-debug">{{ mirrorDebug }}</pre>
             <span>{{ moveitSnapshot.visualModel.name }}</span>
             <strong>{{ moveitSnapshot.robotConfigId }}</strong>
             <p>{{ moveitSnapshot.viewportRole }}</p>
@@ -472,10 +476,15 @@ onMounted(async () => {
 
   detectPlanners()
   feedTimer = setInterval(() => void pollConsoleFeed(), 500)
+  debugTimer = setInterval(() => {
+    const info = mirrorViewer.value?.getDebugInfo()
+    mirrorDebug.value = info ? JSON.stringify(info, null, 2) : 'no viewer'
+  }, 2000)
 })
 
 onBeforeUnmount(() => {
   if (feedTimer !== null) clearInterval(feedTimer)
+  if (debugTimer !== null) clearInterval(debugTimer)
 })
 
 // --- M15 B6: live planning console ---
@@ -498,6 +507,9 @@ const liveExecution = ref<Record<string, unknown> | null>(null)
 const addedObjects = ref<string[]>([])
 let lastFeedTs = Date.now() * 1_000_000 - 2_000_000_000
 let feedTimer: ReturnType<typeof setInterval> | null = null
+const mirrorViewer = ref<InstanceType<typeof NanoRobotViewer> | null>(null)
+const mirrorDebug = ref('waiting…')
+let debugTimer: ReturnType<typeof setInterval> | null = null
 
 function flashCommandSent(kind: string, seq: number) {
   lastCommandInfo.value = `${kind} → ${t.value.motionConsole.sentSeq} ${seq}`
