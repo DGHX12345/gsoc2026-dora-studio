@@ -2605,7 +2605,7 @@ td span {
 }
 
 .mujoco-mirror-section {
-  overflow: hidden;
+  flex-shrink: 0;
 }
 
 .mujoco-mirror-card {
@@ -2617,6 +2617,7 @@ td span {
 /* The three.js canvas sizes itself to its container; without a bounded
    height it can overflow the card and cover the sections below it. */
 .mujoco-mirror-card .nano-robot-viewer {
+  flex-shrink: 0;
   height: 440px;
   min-height: 0;
 }

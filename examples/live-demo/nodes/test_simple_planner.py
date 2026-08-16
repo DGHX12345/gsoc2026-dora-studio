@@ -107,6 +107,31 @@ class TestChooseTarget(unittest.TestCase):
 
     def test_orbit_target_used_when_no_goal(self):
         self.assertEqual(sp.choose_target(None, (0.8, 0.9)), (0.8, 0.9))
+
+class TestReplanKey(unittest.TestCase):
+    def test_key_changes_with_target(self):
+        cells = frozenset([(1, 2)])
+        k1 = sp.replan_key((0.5, 0.2), cells)
+        k2 = sp.replan_key((0.9, 0.1), cells)
+        self.assertNotEqual(k1, k2)
+
+    def test_key_changes_with_obstacle_cells(self):
+        k1 = sp.replan_key((0.5, 0.2), frozenset([(1, 2)]))
+        k2 = sp.replan_key((0.5, 0.2), frozenset([(1, 2), (3, 4)]))
+        self.assertNotEqual(k1, k2)
+
+    def test_key_stable_for_identical_inputs(self):
+        cells = frozenset([(1, 2), (3, 4)])
+        self.assertEqual(sp.replan_key((0.5, 0.2), cells), sp.replan_key((0.5, 0.2), cells))
+
+    def test_obstacle_cells_only_above_threshold(self):
+        values = [0.0] * (10 * 10)
+        values[0] = 100.0
+        values[5 * 10 + 5] = 79.0
+        cells = sp.obstacle_cells(values, 10, 10)
+        self.assertIn((0, 0), cells)
+        self.assertNotIn((5, 5), cells)
+
 if __name__ == "__main__":
     unittest.main()
 

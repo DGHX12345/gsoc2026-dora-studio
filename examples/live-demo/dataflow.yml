@@ -25,6 +25,8 @@ nodes:
     path: nodes/costmap_source.py
     inputs:
       scene: studio_console/scene_command
+      mode: studio_console/mode_command
+      resume: studio_console/resume_command
     outputs:
       - costmap
       - scene_update
@@ -59,6 +61,7 @@ nodes:
       - target_point
       - execute_command
       - resume_command
+      - mode_command
       - scene_command
     env:
       STUDIO_BACKEND_URL: http://127.0.0.1:3001/api/live/ingest

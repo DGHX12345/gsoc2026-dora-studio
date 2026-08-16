@@ -82,6 +82,19 @@ def make_scene(t, user_objects=None):
     }
 
 
+def apply_mode_command(auto, command):
+    """B6: console-first semantics — the orbit target only runs in auto
+    mode; a console Plan command disables it."""
+    if not isinstance(command, dict):
+        return auto
+    kind = command.get("command")
+    if kind == "plan":
+        return False
+    if kind == "auto":
+        return True
+    return auto
+
+
 def apply_scene_command(user_objects, command):
     """B6: add/remove user objects; returns the updated list."""
     action = command.get("action")
@@ -106,17 +119,21 @@ def target_xy(t):
 def main():
     node = Node()
     user_objects = []
+    auto = False
     t0 = time.time()
     while True:
         event = node.try_recv()
         if event is not None and event.get("type") == "STOP":
             break
-        if event is not None and event.get("type") == "INPUT" and event["id"] == "scene":
+        if event is not None and event.get("type") == "INPUT":
             value = event.get("value")
-            if value is not None:
+            if value is not None and event["id"] in ("scene", "mode", "resume"):
                 try:
                     command = json.loads(bytes(value.to_pylist()).decode("utf-8"))
-                    user_objects = apply_scene_command(user_objects, command)
+                    if event["id"] == "scene":
+                        user_objects = apply_scene_command(user_objects, command)
+                    else:
+                        auto = apply_mode_command(auto, command)
                 except (UnicodeDecodeError, json.JSONDecodeError):
                     pass
         t = time.time() - t0
@@ -135,8 +152,9 @@ def main():
                 type=pa.uint8(),
             ),
         )
-        x, y = target_xy(t)
-        node.send_output("target_point", pa.array([x, y, 0.30]))
+        if auto:
+            x, y = target_xy(t)
+            node.send_output("target_point", pa.array([x, y, 0.30]))
 
         time.sleep(CADENCE_S)
 

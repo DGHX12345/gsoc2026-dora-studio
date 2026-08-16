@@ -36,7 +36,10 @@ def command_to_outputs(command):
             return []
         x, y = float(target[0]), float(target[1])
         z = float(target[2]) if len(target) >= 3 and isinstance(target[2], (int, float)) else TARGET_Z
-        return [("target_point", [x, y, z])]
+        return [
+            ("target_point", [x, y, z]),
+            ("mode_command", {"command": "plan"}),
+        ]
     if kind in ("execute", "stop"):
         return [("execute_command", {"command": kind})]
     if kind == "auto":
@@ -84,7 +87,12 @@ def main():
             for command in body.get("commands", []):
                 seq = command.get("seq", since_seq)
                 for output_id, payload in command_to_outputs(command):
-                    if output_id in ("scene_command", "execute_command", "resume_command"):
+                    if output_id in (
+                        "scene_command",
+                        "execute_command",
+                        "resume_command",
+                        "mode_command",
+                    ):
                         encoded = json.dumps(payload).encode()
                         node.send_output(
                             output_id,

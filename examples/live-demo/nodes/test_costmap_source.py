@@ -73,6 +73,20 @@ class TestUserObjects(unittest.TestCase):
             objects, {"action": "remove", "object": {"name": "user_box"}}
         )
         self.assertEqual(objects, [])
+
+class TestModeGating(unittest.TestCase):
+    def test_plan_command_disables_auto_orbit(self):
+        self.assertFalse(cs.apply_mode_command(True, {"command": "plan"}))
+        self.assertFalse(cs.apply_mode_command(False, {"command": "plan"}))
+
+    def test_auto_command_enables_auto_orbit(self):
+        self.assertTrue(cs.apply_mode_command(False, {"command": "auto"}))
+        self.assertTrue(cs.apply_mode_command(True, {"command": "auto"}))
+
+    def test_unknown_command_keeps_state(self):
+        self.assertTrue(cs.apply_mode_command(True, {"command": "fly"}))
+        self.assertFalse(cs.apply_mode_command(False, "plan"))
+
 if __name__ == "__main__":
     unittest.main()
 

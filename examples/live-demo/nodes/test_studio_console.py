@@ -11,14 +11,15 @@ import studio_console as sc
 
 
 class TestCommandToOutputs(unittest.TestCase):
-    def test_plan_command_maps_to_target_point_with_default_z(self):
+    def test_plan_command_maps_to_target_point_and_mode_plan(self):
         outputs = sc.command_to_outputs(
             {"seq": 1, "kind": "plan", "target": [0.5, 0.2], "planner": None}
         )
-        self.assertEqual(len(outputs), 1)
+        self.assertEqual(len(outputs), 2)
         output_id, payload = outputs[0]
         self.assertEqual(output_id, "target_point")
         self.assertEqual(payload, [0.5, 0.2, 0.30])
+        self.assertEqual(outputs[1], ("mode_command", {"command": "plan"}))
 
     def test_plan_command_keeps_explicit_z(self):
         outputs = sc.command_to_outputs(

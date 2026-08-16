@@ -36,6 +36,25 @@ def cost_at(values, width, i, j):
     return 1.0 + values[i * width + j] / 50.0
 
 
+def obstacle_cells(values, width, height):
+    """The set of impassable cells — the replan trigger for costmap
+    changes (a drifting blob that keeps its obstacle cells does not
+    force replans)."""
+    return frozenset(
+        (i, j)
+        for i in range(height)
+        for j in range(width)
+        if values[i * width + j] >= OBSTACLE_THRESHOLD
+    )
+
+
+def replan_key(target, cells):
+    """B6: dedupe key — replan only when the target or the obstacle
+    layout actually changed (no more per-tick replan spam)."""
+    tx, ty = round(target[0], 2), round(target[1], 2)
+    return (tx, ty, cells)
+
+
 def choose_target(goal, orbit):
     """B6: the console goal overrides the orbiting demo target until the
     console sends `auto` (goal cleared back to None)."""
@@ -113,6 +132,7 @@ def main():
     orbit_target = None
     goal = None
     plan_id = 0
+    last_key = None
     while True:
         event = node.try_recv()
         if event is not None and event.get("type") == "STOP":
@@ -148,6 +168,12 @@ def main():
         target = choose_target(goal, orbit_target)
         if costmap is None or target is None:
             continue
+
+        cells = obstacle_cells(costmap["values"], costmap["width"], costmap["height"])
+        key = replan_key(target, cells)
+        if key == last_key:
+            continue
+        last_key = key
 
         t0 = time.perf_counter()
         path, explored = plan_path_with_stats(

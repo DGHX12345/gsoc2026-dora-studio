@@ -89,8 +89,11 @@
       <LogsEventsView v-else-if="activeView === 'logs'" />
       <ReplayTimeline v-else-if="activeView === 'replay'" />
       <MetricsDashboard v-else-if="activeView === 'metrics'" />
-      <VisualizationView v-else-if="activeView === 'visualization'" />
-      <MotionPlannerView v-else />
+      <!-- M15 B6: the viewport stays mounted across page switches
+           (v-show, not v-if) so the live feed and tool attachments
+           survive; hidden pages render nothing (on-demand rendering). -->
+      <VisualizationView v-show="activeView === 'visualization'" />
+      <MotionPlannerView v-if="activeView === 'motion'" />
     </main>
   </div>
 </template>
