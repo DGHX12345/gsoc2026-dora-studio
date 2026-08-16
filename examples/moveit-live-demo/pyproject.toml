@@ -1,0 +1,13 @@
+[project]
+name = "moveit-live-demo"
+version = "0.1.0"
+description = "M15 Phase C live demo: moveit planning + dora-mujoco physics mirror"
+requires-python = ">=3.10"
+dependencies = ["dora-rs >= 0.5.0", "numpy", "pyarrow"]
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["moveit_live_demo", "moveit_live_demo.config"]
