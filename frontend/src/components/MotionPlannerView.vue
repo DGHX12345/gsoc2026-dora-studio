@@ -247,6 +247,7 @@ import {
   buildSceneAddCommand,
   buildSceneRemoveCommand,
   extractConsoleStatus,
+  mapLiveJointsToNano,
   parseTargetInputs,
 } from '../live-command'
 import {
@@ -469,7 +470,7 @@ onMounted(async () => {
   seedNanoArmJointState()
 
   detectPlanners()
-  feedTimer = setInterval(() => void pollConsoleFeed(), 1000)
+  feedTimer = setInterval(() => void pollConsoleFeed(), 500)
 })
 
 onBeforeUnmount(() => {
@@ -561,6 +562,13 @@ async function pollConsoleFeed() {
     const status = extractConsoleStatus(frames)
     if (status.planStatus !== null) livePlanStatus.value = status.planStatus
     if (status.execution !== null) liveExecution.value = status.execution
+    if (status.joints !== null) {
+      // The mirror's job: mirror the moveit-side live state from the
+      // running dataflow (B601 joint1-6 -> Nano joint1-6; gripper
+      // dropped — the Nano mirror has no gripper).
+      const mapped = mapLiveJointsToNano(status.joints)
+      if (mapped !== null) Object.assign(nanoArmJointState, mapped)
+    }
     consoleFeedStatus.value = 'connected'
   } catch {
     consoleFeedStatus.value = 'unavailable'

@@ -2611,13 +2611,14 @@ td span {
 .mujoco-mirror-card {
   display: grid;
   gap: 18px;
-  grid-template-columns: minmax(0, 1.35fr) minmax(220px, 0.65fr);
+  grid-template-columns: 1fr;
 }
 
-@media (max-width: 1500px) {
-  .mujoco-mirror-card {
-    grid-template-columns: 1fr;
-  }
+/* The three.js canvas sizes itself to its container; without a bounded
+   height it can overflow the card and cover the sections below it. */
+.mujoco-mirror-card .nano-robot-viewer {
+  height: 440px;
+  min-height: 0;
 }
 
 .mujoco-mirror-details {

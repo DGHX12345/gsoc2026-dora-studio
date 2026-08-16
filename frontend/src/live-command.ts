@@ -6,6 +6,7 @@ import type { LiveCommandRequest, LiveFrame } from './api'
 export interface ConsoleStatus {
   planStatus: Record<string, unknown> | null
   execution: Record<string, unknown> | null
+  joints: number[] | null
 }
 
 export function buildPlanCommand(target: number[], planner?: string): LiveCommandRequest {
@@ -49,7 +50,12 @@ export function parseTargetInputs(x: string, y: string, z: string): number[] | n
 export function extractConsoleStatus(frames: LiveFrame[]): ConsoleStatus {
   let planStatus: Record<string, unknown> | null = null
   let execution: Record<string, unknown> | null = null
+  let joints: number[] | null = null
   for (const frame of frames) {
+    if (frame.output_id === 'joint_positions' && Array.isArray(frame.payload.values)) {
+      joints = frame.payload.values as number[]
+      continue
+    }
     const json = frame.payload.json
     if (json === null || typeof json !== 'object' || Array.isArray(json)) continue
     if (frame.output_id === 'plan_status') planStatus = json as Record<string, unknown>
@@ -57,5 +63,19 @@ export function extractConsoleStatus(frames: LiveFrame[]): ConsoleStatus {
       execution = json as Record<string, unknown>
     }
   }
-  return { planStatus, execution }
+  return { planStatus, execution, joints }
+}
+
+/** B601 live joint_positions (6 arm joints + gripper) -> the Nano mirror
+ * joint names (joint1..joint6); null when the input is too short. */
+export function mapLiveJointsToNano(values: number[]): Record<string, number> | null {
+  if (!Array.isArray(values) || values.length < 6) return null
+  return {
+    joint1: values[0],
+    joint2: values[1],
+    joint3: values[2],
+    joint4: values[3],
+    joint5: values[4],
+    joint6: values[5],
+  }
 }
