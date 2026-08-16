@@ -10,7 +10,6 @@ import {
   buildSceneAddCommand,
   buildSceneRemoveCommand,
   extractConsoleStatus,
-  mapLiveJointsToNano,
   parseTargetInputs,
 } from './live-command'
 
@@ -116,11 +115,3 @@ test('extractConsoleStatus picks the latest joint_positions', () => {
   assert.deepEqual(status.joints, [1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 0.02])
 })
 
-test('mapLiveJointsToNano maps the first six joints and rejects short input', () => {
-  assert.deepEqual(
-    mapLiveJointsToNano([0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.03]),
-    { joint1: 0.1, joint2: 0.2, joint3: 0.3, joint4: 0.4, joint5: 0.5, joint6: 0.6 },
-  )
-  assert.equal(mapLiveJointsToNano([0.1, 0.2]), null)
-  assert.equal(mapLiveJointsToNano([]), null)
-})

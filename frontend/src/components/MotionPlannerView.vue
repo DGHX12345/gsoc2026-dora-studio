@@ -80,7 +80,7 @@
     <article class="motion-panel motion-right">
       <div class="motion-section mujoco-mirror-section">
         <div class="motion-section-header">
-          <h3>Nano Full MuJoCo Visual Mirror</h3>
+          <h3>Robot Mirror (MoveIt B601)</h3>
           <span class="pill warning">mirror only</span>
         </div>
         <div class="mujoco-mirror-card">
@@ -90,13 +90,11 @@
             :asset-base-url="nanoArmResources.assetBaseUrl"
             :joint-values="nanoArmJointState"
             :base-pose="nanoRobotBasePose"
-            viewer-label="Nano full arm planning preview"
-            :model-visible="true"
-            @loaded="updateNanoArmJointOrder"
+            viewer-label="Robot mirror (B601 via MoveIt tool)"
+            :model-visible="false"
+            @loaded="onMirrorViewerLoaded"
           />
           <div class="mujoco-mirror-details" :title="nanoArmResources.xmlUrl">
-            <!-- TEMP DEBUG (M15 B6 mirror diagnosis) -->
-            <pre class="mirror-debug">{{ mirrorDebug }}</pre>
             <span>{{ moveitSnapshot.visualModel.name }}</span>
             <strong>{{ moveitSnapshot.robotConfigId }}</strong>
             <p>{{ moveitSnapshot.viewportRole }}</p>
@@ -247,15 +245,17 @@ import {
   type RobotProfileResponse,
 } from '../api'
 import { useI18n } from '../i18n'
+import { frameToToolBatch } from '../live-feed'
 import {
   buildExecuteCommand,
   buildPlanCommand,
   buildSceneAddCommand,
   buildSceneRemoveCommand,
   extractConsoleStatus,
-  mapLiveJointsToNano,
   parseTargetInputs,
 } from '../live-command'
+import { registerBuiltinTools } from '../tools/index'
+import { toolRegistry } from '../tools/registry'
 import {
   buildNanoArmModelResources,
   createNanoArmJointState,
@@ -445,6 +445,27 @@ const snapshotSourceLabel = computed(() => `${moveitSnapshotSource.value} · ${m
 const goalJointRows = computed(() => nanoArmJointControls.value)
 const trajectoryColumnCount = computed(() => goalJointRows.value.length + 2)
 
+let mirrorToolAttached = false
+
+function onMirrorViewerLoaded(jointOrder: typeof nanoArmJointOrder.value) {
+  updateNanoArmJointOrder(jointOrder)
+  if (mirrorToolAttached) return
+  const viewer = mirrorViewer.value
+  const scene = viewer?.getScene()
+  const camera = viewer?.getCamera()
+  if (!scene || !camera) return
+  // The console mirror renders the B601 through the MoveIt tool (URDF
+  // loader + joint driving); the nano model stays hidden above.
+  registerBuiltinTools()
+  toolRegistry.attachToScene('moveit-bridge', {
+    scene,
+    camera,
+    requestRender: () => viewer?.requestRender(),
+    focusOn: (center, radius) => viewer?.focusOn(center, radius),
+  })
+  mirrorToolAttached = true
+}
+
 function updateNanoArmJointOrder(jointOrder: typeof nanoArmJointOrder.value) {
   nanoArmJointOrder.value = jointOrder.length > 0 ? jointOrder : [...NANO_ARM_JOINT_NAMES]
 }
@@ -477,15 +498,10 @@ onMounted(async () => {
 
   detectPlanners()
   feedTimer = setInterval(() => void pollConsoleFeed(), 500)
-  debugTimer = setInterval(() => {
-    const info = mirrorViewer.value?.getDebugInfo()
-    mirrorDebug.value = info ? JSON.stringify(info, null, 2) : 'no viewer'
-  }, 2000)
 })
 
 onBeforeUnmount(() => {
   if (feedTimer !== null) clearInterval(feedTimer)
-  if (debugTimer !== null) clearInterval(debugTimer)
 })
 
 // --- M15 B6: live planning console ---
@@ -510,8 +526,6 @@ const addedObjects = ref<string[]>([])
 let lastFeedTs = Date.now() * 1_000_000 - 2_000_000_000
 let feedTimer: ReturnType<typeof setInterval> | null = null
 const mirrorViewer = ref<InstanceType<typeof NanoRobotViewer> | null>(null)
-const mirrorDebug = ref('waiting…')
-let debugTimer: ReturnType<typeof setInterval> | null = null
 
 function flashCommandSent(kind: string, seq: number) {
   // Plan disables the orbit demo; Auto enables it (mirrors the
@@ -594,12 +608,11 @@ async function pollConsoleFeed() {
     const status = extractConsoleStatus(frames)
     if (status.planStatus !== null) livePlanStatus.value = status.planStatus
     if (status.execution !== null) liveExecution.value = status.execution
-    if (status.joints !== null) {
-      // The mirror's job: mirror the moveit-side live state from the
-      // running dataflow (B601 joint1-6 -> Nano joint1-6; gripper
-      // dropped — the Nano mirror has no gripper).
-      const mapped = mapLiveJointsToNano(status.joints)
-      if (mapped !== null) Object.assign(nanoArmJointState, mapped)
+    // Feed the B601 mirror: the MoveIt tool consumes the same live
+    // batches it would receive in the Visualization viewport.
+    for (const frame of frames) {
+      const batch = frameToToolBatch(frame)
+      if (batch) toolRegistry.broadcastBatch(batch)
     }
     consoleFeedStatus.value = 'connected'
   } catch {

@@ -65,17 +65,3 @@ export function extractConsoleStatus(frames: LiveFrame[]): ConsoleStatus {
   }
   return { planStatus, execution, joints }
 }
-
-/** B601 live joint_positions (6 arm joints + gripper) -> the Nano mirror
- * joint names (joint1..joint6); null when the input is too short. */
-export function mapLiveJointsToNano(values: number[]): Record<string, number> | null {
-  if (!Array.isArray(values) || values.length < 6) return null
-  return {
-    joint1: values[0],
-    joint2: values[1],
-    joint3: values[2],
-    joint4: values[3],
-    joint5: values[4],
-    joint6: values[5],
-  }
-}
