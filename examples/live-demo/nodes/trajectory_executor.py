@@ -21,7 +21,9 @@ from dora import Node
 
 TICK_S = 0.05
 MOVE_DURATION_S = 1.5
-HOME = [0.0, 0.6, -1.2, 1.4, 0.5, 0.4, 0.03]
+# Nano-model-friendly home: the mirror renders the NANO robot, so the
+# demo poses stay well inside plausible nano arm ranges.
+HOME = [0.0, 0.4, -0.8, 0.8, 0.4, 0.2, 0.03]
 
 
 def quintic_step(s, q0, q1):
@@ -31,18 +33,27 @@ def quintic_step(s, q0, q1):
 
 
 def pose_toward_target(target_xy):
-    """B601-compatible 7-joint pose tracking the target azimuth."""
+    """7-joint pose tracking the target azimuth with gentle nano-friendly
+    ranges (the mirror renders the NANO model — B601-scale angles would
+    fold it into impossible poses)."""
     x, y = target_xy
-    azimuth = 0.5 * math.atan2(y, x)
+    azimuth = 0.3 * math.atan2(y, x)
     return [
         azimuth,
-        0.6 + 0.15 * math.sin(time.time()),
-        -1.2,
-        1.4,
-        0.5,
+        0.4 + 0.1 * math.sin(time.time()),
+        -0.8 + 0.15 * math.cos(time.time() * 0.7),
+        0.8,
         0.4,
+        0.2,
         0.03,
     ]
+
+
+def home_return(q_current):
+    """The Stop behavior: a quintic move from the current pose back to
+    HOME (not an instant hold — the console expects Stop to return the
+    arm to its starting pose)."""
+    return plan_samples(q_current, HOME, MOVE_DURATION_S, TICK_S)
 
 
 def plan_samples(q_from, q_to, duration_s, tick_s):
@@ -124,7 +135,8 @@ def main():
                         command = None
                     parsed = parse_execute_command(command)
                     if parsed == "stop":
-                        samples = []
+                        # Stop returns the arm to HOME, then holds.
+                        samples = home_return(q_current)
                         step = 0
                     elif parsed == "execute" and not samples:
                         samples = plan_samples(

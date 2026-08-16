@@ -140,6 +140,7 @@
           <button class="primary-action execute" :disabled="consoleBusy" @click="sendCommand('execute')">Execute</button>
           <button class="secondary" :disabled="consoleBusy" @click="sendCommand('stop')">Stop</button>
           <button class="secondary" :disabled="consoleBusy" @click="sendCommand('auto')" :title="t.motionConsole.autoHint">Auto</button>
+          <span :class="['pill', modeLabel === 'auto' ? 'success' : '']">{{ t.motionConsole.modeLabel }}: {{ modeLabel === 'auto' ? t.motionConsole.modeAuto : t.motionConsole.modeManual }}</span>
         </div>
         <div v-if="consoleError" class="rp-error">{{ consoleError }}</div>
         <div v-if="lastCommandInfo" class="console-sent-info">{{ lastCommandInfo }}</div>
@@ -500,6 +501,7 @@ const plannerOptions = ref<{ id: string; label: string }[]>([
 const consoleBusy = ref(false)
 const consoleError = ref<string | null>(null)
 const lastCommandInfo = ref<string | null>(null)
+const modeLabel = ref<'manual' | 'auto'>('manual')
 let commandInfoTimer: ReturnType<typeof setTimeout> | null = null
 const consoleFeedStatus = ref<'connected' | 'unavailable'>('unavailable')
 const livePlanStatus = ref<Record<string, unknown> | null>(null)
@@ -512,6 +514,11 @@ const mirrorDebug = ref('waiting…')
 let debugTimer: ReturnType<typeof setInterval> | null = null
 
 function flashCommandSent(kind: string, seq: number) {
+  // Plan disables the orbit demo; Auto enables it (mirrors the
+  // costmap_source mode state).
+  if (kind === 'plan') modeLabel.value = 'manual'
+  if (kind === 'auto') modeLabel.value = 'auto'
+
   lastCommandInfo.value = `${kind} → ${t.value.motionConsole.sentSeq} ${seq}`
   if (commandInfoTimer !== null) clearTimeout(commandInfoTimer)
   commandInfoTimer = setTimeout(() => { lastCommandInfo.value = null }, 3000)

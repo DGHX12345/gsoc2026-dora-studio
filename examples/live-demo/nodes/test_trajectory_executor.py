@@ -40,21 +40,37 @@ class TestQuinticStep(unittest.TestCase):
 
 class TestPoseTowardTarget(unittest.TestCase):
     def test_azimuth_tracks_four_quadrants(self):
-        # q1 = 0.5 * atan2(y, x), clamped to ±0.5π
+        # q1 = 0.3 * atan2(y, x) — gentle nano-range tracking
         right = te.pose_toward_target((1.0, 0.0))
         left = te.pose_toward_target((-1.0, 0.0))
         front = te.pose_toward_target((0.0, 1.0))
         back = te.pose_toward_target((0.0, -1.0))
         self.assertAlmostEqual(right[0], 0.0)
-        self.assertAlmostEqual(left[0], 0.5 * math.pi)
-        self.assertAlmostEqual(front[0], 0.25 * math.pi)
-        self.assertAlmostEqual(back[0], -0.25 * math.pi)
+        self.assertAlmostEqual(left[0], 0.3 * math.pi)
+        self.assertAlmostEqual(front[0], 0.15 * math.pi)
+        self.assertAlmostEqual(back[0], -0.15 * math.pi)
 
     def test_returns_seven_joints(self):
         pose = te.pose_toward_target((0.5, 0.3))
         self.assertEqual(len(pose), 7)
         for value in pose:
             self.assertTrue(math.isfinite(value))
+
+    def test_pose_stays_within_nano_friendly_bounds(self):
+        # the mirror is the NANO model: poses must stay plausible for it
+        # (|arm joints| <= 1.0 rad, gripper within 0..0.0715 m)
+        for target in ((1, 0), (-1, 0), (0, 1), (0, -1), (0.3, 0.4)):
+            pose = te.pose_toward_target(target)
+            for value in pose[:6]:
+                self.assertLessEqual(abs(value), 1.0)
+            self.assertGreaterEqual(pose[6], 0.0)
+            self.assertLessEqual(pose[6], 0.0715)
+
+    def test_home_return_ends_at_home(self):
+        samples = te.home_return([0.5, 0.2, -0.4, 0.3, 0.1, 0.05, 0.02])
+        self.assertEqual(samples[0][0], 0.5)
+        self.assertEqual(samples[-1], te.HOME)
+        self.assertGreater(len(samples), 1)
 
 
 class TestPlanSamples(unittest.TestCase):

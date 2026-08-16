@@ -163,6 +163,9 @@ type Messages = {
     invalidTarget: string
     sendFailed: string
     sentSeq: string
+    modeLabel: string
+    modeManual: string
+    modeAuto: string
   }
 }
 
@@ -331,6 +334,9 @@ const messages: Record<Locale, Messages> = {
       invalidTarget: '目标坐标无效：请输入有限数字',
       sendFailed: '命令发送失败',
       sentSeq: '已发送，序号',
+      modeLabel: '模式',
+      modeManual: '手动目标',
+      modeAuto: '自动轨道',
     },
   },
   en: {
@@ -497,6 +503,9 @@ const messages: Record<Locale, Messages> = {
       invalidTarget: 'Invalid target: enter finite numbers',
       sendFailed: 'Command failed to send',
       sentSeq: 'sent, seq',
+      modeLabel: 'Mode',
+      modeManual: 'manual goal',
+      modeAuto: 'auto orbit',
     },
   },
 }
