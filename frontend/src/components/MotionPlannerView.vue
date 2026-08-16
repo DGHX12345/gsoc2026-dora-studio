@@ -80,7 +80,7 @@
     <article class="motion-panel motion-right">
       <div class="motion-section mujoco-mirror-section">
         <div class="motion-section-header">
-          <h3>Robot Mirror (MoveIt B601)</h3>
+          <h3>Nano Full MuJoCo Visual Mirror</h3>
           <span class="pill warning">mirror only</span>
         </div>
         <div class="mujoco-mirror-card">
@@ -90,9 +90,9 @@
             :asset-base-url="nanoArmResources.assetBaseUrl"
             :joint-values="nanoArmJointState"
             :base-pose="nanoRobotBasePose"
-            viewer-label="Robot mirror (B601 via MoveIt tool)"
-            :model-visible="false"
-            @loaded="onMirrorViewerLoaded"
+            viewer-label="Nano full arm planning preview"
+            :model-visible="true"
+            @loaded="updateNanoArmJointOrder"
           />
           <div class="mujoco-mirror-details" :title="nanoArmResources.xmlUrl">
             <span>{{ moveitSnapshot.visualModel.name }}</span>
@@ -245,7 +245,6 @@ import {
   type RobotProfileResponse,
 } from '../api'
 import { useI18n } from '../i18n'
-import { frameToToolBatch } from '../live-feed'
 import {
   buildExecuteCommand,
   buildPlanCommand,
@@ -254,8 +253,6 @@ import {
   extractConsoleStatus,
   parseTargetInputs,
 } from '../live-command'
-import { registerBuiltinTools } from '../tools/index'
-import { toolRegistry } from '../tools/registry'
 import {
   buildNanoArmModelResources,
   createNanoArmJointState,
@@ -445,27 +442,6 @@ const snapshotSourceLabel = computed(() => `${moveitSnapshotSource.value} · ${m
 const goalJointRows = computed(() => nanoArmJointControls.value)
 const trajectoryColumnCount = computed(() => goalJointRows.value.length + 2)
 
-let mirrorToolAttached = false
-
-function onMirrorViewerLoaded(jointOrder: typeof nanoArmJointOrder.value) {
-  updateNanoArmJointOrder(jointOrder)
-  if (mirrorToolAttached) return
-  const viewer = mirrorViewer.value
-  const scene = viewer?.getScene()
-  const camera = viewer?.getCamera()
-  if (!scene || !camera) return
-  // The console mirror renders the B601 through the MoveIt tool (URDF
-  // loader + joint driving); the nano model stays hidden above.
-  registerBuiltinTools()
-  toolRegistry.attachToScene('moveit-bridge', {
-    scene,
-    camera,
-    requestRender: () => viewer?.requestRender(),
-    focusOn: (center, radius) => viewer?.focusOn(center, radius),
-  })
-  mirrorToolAttached = true
-}
-
 function updateNanoArmJointOrder(jointOrder: typeof nanoArmJointOrder.value) {
   nanoArmJointOrder.value = jointOrder.length > 0 ? jointOrder : [...NANO_ARM_JOINT_NAMES]
 }
@@ -608,12 +584,6 @@ async function pollConsoleFeed() {
     const status = extractConsoleStatus(frames)
     if (status.planStatus !== null) livePlanStatus.value = status.planStatus
     if (status.execution !== null) liveExecution.value = status.execution
-    // Feed the B601 mirror: the MoveIt tool consumes the same live
-    // batches it would receive in the Visualization viewport.
-    for (const frame of frames) {
-      const batch = frameToToolBatch(frame)
-      if (batch) toolRegistry.broadcastBatch(batch)
-    }
     consoleFeedStatus.value = 'connected'
   } catch {
     consoleFeedStatus.value = 'unavailable'
