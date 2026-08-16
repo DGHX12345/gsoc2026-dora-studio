@@ -3828,3 +3828,10 @@ td span {
 .collapsible.terminal-panel summary h2 {
   font-size: inherit;
 }
+
+/* M15 B6: transient command-sent feedback */
+.console-sent-info {
+  color: var(--accent-green);
+  font-size: 13px;
+  margin-top: 8px;
+}

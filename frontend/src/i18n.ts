@@ -162,6 +162,7 @@ type Messages = {
     removeBox: string
     invalidTarget: string
     sendFailed: string
+    sentSeq: string
   }
 }
 
@@ -329,6 +330,7 @@ const messages: Record<Locale, Messages> = {
       removeBox: '移除箱子',
       invalidTarget: '目标坐标无效：请输入有限数字',
       sendFailed: '命令发送失败',
+      sentSeq: '已发送，序号',
     },
   },
   en: {
@@ -494,6 +496,7 @@ const messages: Record<Locale, Messages> = {
       removeBox: 'Remove Box',
       invalidTarget: 'Invalid target: enter finite numbers',
       sendFailed: 'Command failed to send',
+      sentSeq: 'sent, seq',
     },
   },
 }

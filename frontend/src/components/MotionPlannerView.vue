@@ -138,6 +138,7 @@
           <button class="secondary" :disabled="consoleBusy" @click="sendCommand('auto')" :title="t.motionConsole.autoHint">Auto</button>
         </div>
         <div v-if="consoleError" class="rp-error">{{ consoleError }}</div>
+        <div v-if="lastCommandInfo" class="console-sent-info">{{ lastCommandInfo }}</div>
 
         <div class="console-status">
           <span v-if="livePlanStatus !== null" :class="['pill', (livePlanStatus.success as boolean) ? 'success' : 'failed']">
@@ -489,6 +490,8 @@ const plannerOptions = ref<{ id: string; label: string }[]>([
 ])
 const consoleBusy = ref(false)
 const consoleError = ref<string | null>(null)
+const lastCommandInfo = ref<string | null>(null)
+let commandInfoTimer: ReturnType<typeof setTimeout> | null = null
 const consoleFeedStatus = ref<'connected' | 'unavailable'>('unavailable')
 const livePlanStatus = ref<Record<string, unknown> | null>(null)
 const liveExecution = ref<Record<string, unknown> | null>(null)
@@ -496,11 +499,18 @@ const addedObjects = ref<string[]>([])
 let lastFeedTs = Date.now() * 1_000_000 - 2_000_000_000
 let feedTimer: ReturnType<typeof setInterval> | null = null
 
+function flashCommandSent(kind: string, seq: number) {
+  lastCommandInfo.value = `${kind} → ${t.value.motionConsole.sentSeq} ${seq}`
+  if (commandInfoTimer !== null) clearTimeout(commandInfoTimer)
+  commandInfoTimer = setTimeout(() => { lastCommandInfo.value = null }, 3000)
+}
+
 async function sendCommand(kind: 'execute' | 'stop' | 'auto') {
   consoleBusy.value = true
   consoleError.value = null
   try {
-    await postLiveCommand(buildExecuteCommand(kind))
+    const result = await postLiveCommand(buildExecuteCommand(kind))
+    flashCommandSent(kind, result.seq)
   } catch (e) {
     consoleError.value = e instanceof Error ? e.message : t.value.motionConsole.sendFailed
   } finally {
@@ -517,7 +527,8 @@ async function sendPlan() {
   consoleBusy.value = true
   consoleError.value = null
   try {
-    await postLiveCommand(buildPlanCommand(target, selectedPlanner.value || undefined))
+    const result = await postLiveCommand(buildPlanCommand(target, selectedPlanner.value || undefined))
+    flashCommandSent('plan', result.seq)
   } catch (e) {
     consoleError.value = e instanceof Error ? e.message : t.value.motionConsole.sendFailed
   } finally {
@@ -530,8 +541,9 @@ async function addBox() {
   consoleBusy.value = true
   consoleError.value = null
   try {
-    await postLiveCommand(buildSceneAddCommand(name, 'box', [0.6, 0.4, 0.15], [0.1, 0.1, 0.3]))
+    const result = await postLiveCommand(buildSceneAddCommand(name, 'box', [0.6, 0.4, 0.15], [0.1, 0.1, 0.3]))
     addedObjects.value.push(name)
+    flashCommandSent('scene', result.seq)
   } catch (e) {
     consoleError.value = e instanceof Error ? e.message : t.value.motionConsole.sendFailed
   } finally {
@@ -545,7 +557,8 @@ async function removeLastBox() {
   consoleBusy.value = true
   consoleError.value = null
   try {
-    await postLiveCommand(buildSceneRemoveCommand(name))
+    const result = await postLiveCommand(buildSceneRemoveCommand(name))
+    flashCommandSent('scene', result.seq)
   } catch (e) {
     consoleError.value = e instanceof Error ? e.message : t.value.motionConsole.sendFailed
   } finally {

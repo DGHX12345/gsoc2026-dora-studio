@@ -454,6 +454,11 @@ fn collect_yaml_files(directory: &Path, paths: &mut Vec<PathBuf>) -> Result<(), 
         let path = entry.path();
 
         if path.is_dir() {
+            // dora session artifacts (out/dataflow-dora-session.yml) are
+            // runtime byproducts, not source dataflows — skip them.
+            if path.file_name().and_then(|name| name.to_str()) == Some("out") {
+                continue;
+            }
             collect_yaml_files(&path, paths)?;
         } else if is_yaml_file(&path) {
             paths.push(path);
@@ -596,6 +601,25 @@ nodes:
         assert!(dataflows
             .iter()
             .any(|dataflow| dataflow.id == "robot-perception-test"));
+    }
+
+    #[test]
+    fn skips_dora_session_artifacts_under_out_directories() {
+        // `dora start` writes out/dataflow-dora-session.yml next to the
+        // source dataflow; those session artifacts must not appear in the
+        // dataflow list (their expanded format fails graph parsing).
+        let dir = std::env::temp_dir().join(format!("dora-studio-df-{}", uuid::Uuid::new_v4()));
+        let nested = dir.join("nested").join("out");
+        fs::create_dir_all(&nested).unwrap();
+        fs::write(dir.join("real.yml"), b"nodes: []").unwrap();
+        fs::write(nested.join("dataflow-dora-session.yml"), b"nodes: []").unwrap();
+
+        let mut paths = Vec::new();
+        collect_yaml_files(&dir, &mut paths).unwrap();
+
+        assert_eq!(paths.len(), 1);
+        assert!(paths[0].ends_with("real.yml"));
+        fs::remove_dir_all(&dir).ok();
     }
 
     #[test]

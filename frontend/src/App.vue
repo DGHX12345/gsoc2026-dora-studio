@@ -93,7 +93,7 @@
            (v-show, not v-if) so the live feed and tool attachments
            survive; hidden pages render nothing (on-demand rendering). -->
       <VisualizationView v-show="activeView === 'visualization'" />
-      <MotionPlannerView v-if="activeView === 'motion'" />
+      <MotionPlannerView v-show="activeView === 'motion'" />
     </main>
   </div>
 </template>
