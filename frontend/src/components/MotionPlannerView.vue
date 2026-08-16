@@ -64,10 +64,20 @@
           </div>
         </div>
         <div class="scene-actions">
-          <button :disabled="consoleBusy" @click="addBox">+ {{ t.motionConsole.addBox }}</button>
-          <button class="secondary" :disabled="consoleBusy || addedObjects.length === 0" @click="removeLastBox">
-            − {{ t.motionConsole.removeBox }}
-          </button>
+          <div class="console-field-row">
+            <label>{{ t.motionConsole.boxPos }}</label>
+            <div class="console-target-inputs">
+              <input v-model="boxX" type="text" class="console-input" :title="t.motionConsole.targetX" />
+              <input v-model="boxY" type="text" class="console-input" :title="t.motionConsole.targetY" />
+              <input v-model="boxZ" type="text" class="console-input" :title="t.motionConsole.targetZ" />
+            </div>
+          </div>
+          <div class="scene-actions-buttons">
+            <button :disabled="consoleBusy" @click="addBox">+ {{ t.motionConsole.addBox }}</button>
+            <button class="secondary" :disabled="consoleBusy || addedObjects.length === 0" @click="removeLastBox">
+              − {{ t.motionConsole.removeBox }}
+            </button>
+          </div>
         </div>
       </div>
 
@@ -486,6 +496,11 @@ const { t } = useI18n()
 const targetX = ref('0.55')
 const targetY = ref('0.20')
 const targetZ = ref('0.30')
+// Arm-demo default: inside the ur5e workspace at the planner's link
+// plane (z ~ 0.36) so a single added box visibly blocks direct paths.
+const boxX = ref('0.45')
+const boxY = ref('0.20')
+const boxZ = ref('0.36')
 const selectedPlanner = ref('simple_planner')
 const plannerOptions = ref<{ id: string; label: string }[]>([
   { id: 'simple_planner', label: 'simple_planner (A* grid)' },
@@ -546,11 +561,16 @@ async function sendPlan() {
 }
 
 async function addBox() {
+  const position = parseTargetInputs(boxX.value, boxY.value, boxZ.value)
+  if (position === null) {
+    consoleError.value = t.value.motionConsole.invalidTarget
+    return
+  }
   const name = `box_${addedObjects.value.length + 1}`
   consoleBusy.value = true
   consoleError.value = null
   try {
-    const result = await postLiveCommand(buildSceneAddCommand(name, 'box', [0.6, 0.4, 0.15], [0.1, 0.1, 0.3]))
+    const result = await postLiveCommand(buildSceneAddCommand(name, 'box', position, [0.12, 0.12, 0.24]))
     addedObjects.value.push(name)
     flashCommandSent('scene', result.seq)
   } catch (e) {

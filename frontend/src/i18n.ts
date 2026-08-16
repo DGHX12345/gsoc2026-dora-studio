@@ -160,6 +160,7 @@ type Messages = {
     autoHint: string
     addBox: string
     removeBox: string
+    boxPos: string
     invalidTarget: string
     sendFailed: string
     sentSeq: string
@@ -331,6 +332,7 @@ const messages: Record<Locale, Messages> = {
       autoHint: '恢复自动目标（轨道演示）',
       addBox: '添加箱子',
       removeBox: '移除箱子',
+      boxPos: '箱子位置 (x, y, z)',
       invalidTarget: '目标坐标无效：请输入有限数字',
       sendFailed: '命令发送失败',
       sentSeq: '已发送，序号',
@@ -500,6 +502,7 @@ const messages: Record<Locale, Messages> = {
       autoHint: 'Resume the automatic orbit target',
       addBox: 'Add Box',
       removeBox: 'Remove Box',
+      boxPos: 'Box position (x, y, z)',
       invalidTarget: 'Invalid target: enter finite numbers',
       sendFailed: 'Command failed to send',
       sentSeq: 'sent, seq',
