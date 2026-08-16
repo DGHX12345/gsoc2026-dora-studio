@@ -103,6 +103,43 @@ class TestSerializeEvent(unittest.TestCase):
         self.assertGreaterEqual(out["timestamp"], before)
         self.assertLessEqual(out["timestamp"], after)
 
+    def test_sim_time_float_timestamp_falls_back_to_wall_clock(self):
+        # dora-mujoco sends data.time (sim clock, not wall clock) as the
+        # timestamp metadata — it must not crash the bridge nor be used
+        # as a frame timestamp.
+        before = time.time_ns()
+        out = studio_bridge.serialize_event(
+            {
+                "type": "INPUT",
+                "id": "joint_velocities",
+                "kind": "data",
+                "value": pa.array([0.1, 0.2]),
+                "metadata": {"timestamp": 0.123},
+            },
+            "joint_velocities",
+            ("mujoco_sim", "joint_velocities"),
+        )
+        after = time.time_ns()
+        self.assertGreaterEqual(out["timestamp"], before)
+        self.assertLessEqual(out["timestamp"], after)
+
+    def test_unparseable_timestamp_falls_back_to_wall_clock(self):
+        before = time.time_ns()
+        out = studio_bridge.serialize_event(
+            {
+                "type": "INPUT",
+                "id": "x",
+                "kind": "data",
+                "value": pa.array([1]),
+                "metadata": {"timestamp": "not-a-timestamp"},
+            },
+            "x",
+            ("a", "x"),
+        )
+        after = time.time_ns()
+        self.assertGreaterEqual(out["timestamp"], before)
+        self.assertLessEqual(out["timestamp"], after)
+
     def test_uint8_json_bytes_are_parsed_as_json(self):
         raw = json.dumps({"success": True, "message": "ok"}).encode()
         event = {

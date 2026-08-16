@@ -45,10 +45,18 @@ def resolve_source(inputs, input_id):
 
 
 def timestamp_to_ns(ts):
+    """Metadata timestamp → epoch nanoseconds, or None when it is not a
+    wall-clock time (mujoco sim-time floats, unparseable strings) — the
+    caller then falls back to receive time."""
     if isinstance(ts, datetime):
         dt = ts
+    elif isinstance(ts, (int, float)):
+        return None
     else:
-        dt = datetime.fromisoformat(ts)
+        try:
+            dt = datetime.fromisoformat(ts)
+        except (TypeError, ValueError):
+            return None
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=timezone.utc)
     delta = dt - datetime(1970, 1, 1, tzinfo=timezone.utc)
@@ -73,7 +81,9 @@ def serialize_event(event, input_id, source):
         return None
     metadata = event.get("metadata") or {}
     ts = metadata.get("timestamp")
-    ts_ns = timestamp_to_ns(ts) if ts else time.time_ns()
+    ts_ns = timestamp_to_ns(ts) if ts is not None else None
+    if ts_ns is None:
+        ts_ns = time.time_ns()
     payload = payload_from_value(value)
     payload["metadata"] = {k: v for k, v in metadata.items() if k != "timestamp"}
     return {
