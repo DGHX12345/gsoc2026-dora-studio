@@ -5,12 +5,18 @@ edition = "2021"
 
 [dependencies]
 axum = "0.6"
+bytes = "1"
 chrono = { version = "0.4", features = ["serde"] }
+futures-util = "0.3"
 getrandom = "0.2"
+http = "1"
+http-body = "1"
+http-body-util = "0.1"
 indexmap = "=2.7.0"
 prost = "0.13"
 prost-derive = "0.13"
 tonic = { version = "0.12", default-features = false, features = ["transport", "codegen"] }
+tower = "0.4"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha1 = "0.10"

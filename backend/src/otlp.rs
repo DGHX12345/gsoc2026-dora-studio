@@ -18,6 +18,21 @@ pub struct ExportTraceServiceRequest {
     pub resource_spans: Vec<ResourceSpans>,
 }
 
+/// `opentelemetry.proto.collector.trace.v1.ExportTraceServiceResponse`
+/// (empty message — encodes to zero bytes).
+#[derive(Clone, PartialEq, prost::Message)]
+pub struct ExportTraceServiceResponse {}
+
+/// `opentelemetry.proto.collector.metrics.v1.ExportMetricsServiceRequest`
+/// (empty stub: any protobuf payload decodes into it — unknown fields are
+/// skipped — so the metrics service can accept and discard).
+#[derive(Clone, PartialEq, prost::Message)]
+pub struct ExportMetricsServiceRequest {}
+
+/// `opentelemetry.proto.collector.metrics.v1.ExportMetricsServiceResponse`
+#[derive(Clone, PartialEq, prost::Message)]
+pub struct ExportMetricsServiceResponse {}
+
 /// `opentelemetry.proto.trace.v1.ResourceSpans`
 #[derive(Clone, PartialEq, prost::Message)]
 pub struct ResourceSpans {
