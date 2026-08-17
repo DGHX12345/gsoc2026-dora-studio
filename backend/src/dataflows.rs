@@ -674,6 +674,32 @@ _unstable_debug:
                 && diagnostic.message.contains("_unstable_debug")));
     }
 
+    /// dora 1.0 adds optional top-level fields (health_check_interval,
+    /// strict_types, type_rules). They must not break node extraction —
+    /// at most a warning diagnostic.
+    #[test]
+    fn parses_dora10_optional_top_level_fields() {
+        let parsed = parse_dataflow(
+            r#"
+health_check_interval: 2.5
+strict_types: true
+type_rules:
+  - from: a/b
+    to: c/d
+nodes:
+  - id: camera
+    path: camera.py
+    outputs:
+      - frame
+"#,
+            "dora10.yml",
+        )
+        .expect("dora 1.0 optional fields parse");
+
+        assert_eq!(parsed.nodes.len(), 1);
+        assert_eq!(parsed.nodes[0].id, "camera");
+    }
+
     #[test]
     fn reports_missing_dataflow() {
         let error = match load_definition("missing-dataflow") {
