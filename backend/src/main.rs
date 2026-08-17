@@ -10,10 +10,11 @@ mod lerobot;
 mod live;
 mod metrics;
 mod model_catalog;
-mod monitoring;
 mod models;
+mod monitoring;
 mod otel;
 mod otlp;
+mod otlp_grpc;
 mod profile;
 mod protocol;
 mod runtime;
@@ -185,12 +186,39 @@ async fn main() {
         }
     });
 
+    // OTLP gRPC receiver (M15.6): dora pushes spans/metrics via
+    // DORA_OTLP_ENDPOINT (gRPC). Not fatal if the port is taken.
+    let grpc_bind = std::env::var("DORA_STUDIO_OTLP_GRPC_ADDR")
+        .unwrap_or_else(|_| "127.0.0.1:4317".to_string());
+    let grpc_collector = state.monitoring.otel.clone();
+    let grpc_task = tokio::spawn(async move {
+        let grpc_addr = match grpc_bind.parse::<std::net::SocketAddr>() {
+            Ok(addr) => addr,
+            Err(e) => {
+                eprintln!(
+                    "OTLP gRPC receiver disabled (invalid DORA_STUDIO_OTLP_GRPC_ADDR): {e}"
+                );
+                return;
+            }
+        };
+        let svc = otlp_grpc::service(grpc_collector);
+        println!("OTLP gRPC receiver listening on http://{grpc_addr}");
+        if let Err(e) = tonic::transport::Server::builder()
+            .add_service(svc)
+            .serve(grpc_addr)
+            .await
+        {
+            eprintln!("OTLP gRPC receiver stopped: {e}");
+        }
+    });
+
     axum::Server::bind(&addr)
         .serve(app.into_make_service())
         .with_graceful_shutdown(shutdown_signal())
         .await
         .expect("server failed");
     otlp_task.abort();
+    grpc_task.abort();
 }
 
 struct ApiError {
@@ -937,11 +965,17 @@ async fn lerobot_scan(
 async fn lerobot_frames(
     Json(req): Json<LerobotFramesRequest>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    let (frames, total) =
-        lerobot::read_frames(std::path::Path::new(&req.path), req.episode, req.offset, req.limit)
-            .await
-            .map_err(lerobot_api_error)?;
-    Ok(Json(serde_json::json!({ "frames": frames, "total": total })))
+    let (frames, total) = lerobot::read_frames(
+        std::path::Path::new(&req.path),
+        req.episode,
+        req.offset,
+        req.limit,
+    )
+    .await
+    .map_err(lerobot_api_error)?;
+    Ok(Json(
+        serde_json::json!({ "frames": frames, "total": total }),
+    ))
 }
 
 async fn lerobot_profiles(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {
@@ -1006,10 +1040,14 @@ async fn lerobot_attribution(
         .profiles
         .load(&profile_name)
         .map_err(|e| lerobot_api_error(e.to_string()))?;
-    let (frames, total) =
-        lerobot::read_frames(std::path::Path::new(&req.path), req.episode, req.offset, req.limit)
-            .await
-            .map_err(lerobot_api_error)?;
+    let (frames, total) = lerobot::read_frames(
+        std::path::Path::new(&req.path),
+        req.episode,
+        req.offset,
+        req.limit,
+    )
+    .await
+    .map_err(lerobot_api_error)?;
     let chains = lerobot::chains_from_frames(&frames, &info.tasks);
     let summaries: Vec<serde_json::Value> = chains
         .iter()
@@ -1127,7 +1165,12 @@ async fn metrics_node_history(
     Path(node_id): Path<String>,
     Query(q): Query<NodeHistoryQuery>,
 ) -> Result<Json<Vec<metrics::NodeMetricSample>>, ApiError> {
-    match state.monitoring.metrics.node_history(&node_id, q.window).await {
+    match state
+        .monitoring
+        .metrics
+        .node_history(&node_id, q.window)
+        .await
+    {
         Some(history) => Ok(Json(history)),
         None => Err(ApiError {
             status: StatusCode::NOT_FOUND,
@@ -1157,7 +1200,13 @@ async fn otel_spans(
     State(state): State<Arc<AppState>>,
     Query(q): Query<OtelSpansQuery>,
 ) -> Json<Vec<otel::OtelSpan>> {
-    Json(state.monitoring.otel.spans_for_node(q.node.as_deref(), q.limit).await)
+    Json(
+        state
+            .monitoring
+            .otel
+            .spans_for_node(q.node.as_deref(), q.limit)
+            .await,
+    )
 }
 
 async fn otel_trace(
