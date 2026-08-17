@@ -223,10 +223,7 @@ impl CoordinatorWsClient {
     /// parameters and returns every node across all dataflows).
     pub async fn all_node_infos(&self) -> Result<Vec<NodeInfo>, String> {
         let result = self.request("GetNodeInfo", serde_json::json!({})).await?;
-
-        let nodes: NodeInfoList = serde_json::from_value(result)
-            .map_err(|e| format!("failed to parse GetNodeInfo reply: {e}"))?;
-        Ok(nodes.0)
+        extract_node_infos(result)
     }
 
     /// Send a reload request for a specific node.
@@ -521,6 +518,24 @@ fn extract_id(json_text: &str) -> Option<String> {
         .and_then(|v| v.as_str().map(|s| s.to_string()))
 }
 
+/// Extracts node infos from a GetNodeInfo reply.
+///
+/// dora 1.0 wraps the payload in an externally tagged
+/// `ControlRequestReply` variant (`{"NodeInfoList": [...]}`); dora 0.5
+/// replied with a bare array.
+fn extract_node_infos(result: serde_json::Value) -> Result<Vec<NodeInfo>, String> {
+    let array = match result {
+        serde_json::Value::Array(_) => result,
+        serde_json::Value::Object(mut obj) => obj
+            .remove("NodeInfoList")
+            .ok_or_else(|| "GetNodeInfo reply missing NodeInfoList".to_string())?,
+        _ => return Err("unexpected GetNodeInfo reply shape".to_string()),
+    };
+    let nodes: NodeInfoList = serde_json::from_value(array)
+        .map_err(|e| format!("failed to parse GetNodeInfo reply: {e}"))?;
+    Ok(nodes.0)
+}
+
 fn check_hello_reply(text: &str) -> Result<(), String> {
     let val: serde_json::Value =
         serde_json::from_str(text).map_err(|e| format!("invalid Hello reply: {e}"))?;
@@ -543,6 +558,45 @@ mod tests {
     async fn all_node_infos_errors_when_not_connected() {
         let client = CoordinatorWsClient::new();
         assert!(client.all_node_infos().await.is_err());
+    }
+
+    /// dora 1.0 wraps the GetNodeInfo reply in an externally tagged
+    /// `ControlRequestReply` variant: `{"NodeInfoList": [...]}`.
+    #[test]
+    fn extract_node_infos_unwraps_10_variant() {
+        let result = serde_json::json!({
+            "NodeInfoList": [{
+                "dataflow_id": "11111111-1111-1111-1111-111111111111",
+                "dataflow_name": "demo",
+                "node_id": "planner",
+                "daemon_id": "d1",
+                "metrics": null
+            }]
+        });
+        let nodes = extract_node_infos(result).unwrap();
+        assert_eq!(nodes.len(), 1);
+        assert_eq!(nodes[0].node_id, "planner");
+    }
+
+    /// dora 0.5 replied with a bare array; keep that shape working.
+    #[test]
+    fn extract_node_infos_accepts_bare_array() {
+        let result = serde_json::json!([{
+            "dataflow_id": "11111111-1111-1111-1111-111111111111",
+            "dataflow_name": null,
+            "node_id": "camera",
+            "daemon_id": "d1",
+            "metrics": null
+        }]);
+        let nodes = extract_node_infos(result).unwrap();
+        assert_eq!(nodes.len(), 1);
+        assert_eq!(nodes[0].node_id, "camera");
+    }
+
+    #[test]
+    fn extract_node_infos_rejects_unknown_shape() {
+        let result = serde_json::json!({"unexpected": true});
+        assert!(extract_node_infos(result).is_err());
     }
 
     #[test]
