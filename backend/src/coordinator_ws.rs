@@ -104,12 +104,7 @@ impl CoordinatorWsClient {
 
         // Send Hello handshake
         let hello_id = Uuid::new_v4();
-        let hello_json = serde_json::json!({
-            "id": hello_id.to_string(),
-            "method": "Hello",
-            "params": { "dora_version": DORA_VERSION }
-        })
-        .to_string();
+        let hello_json = build_hello_request(&hello_id.to_string());
 
         {
             let mut w = write_half.lock().await;
@@ -536,6 +531,20 @@ fn extract_node_infos(result: serde_json::Value) -> Result<Vec<NodeInfo>, String
     Ok(nodes.0)
 }
 
+/// Builds the Hello JSON-RPC request.
+///
+/// dora 1.0 deserializes params as an externally tagged `ControlRequest`
+/// enum, so the version goes inside the variant:
+/// `{"Hello": {"dora_version": "..."}}`.
+fn build_hello_request(id: &str) -> String {
+    serde_json::json!({
+        "id": id,
+        "method": "Hello",
+        "params": { "Hello": { "dora_version": DORA_VERSION } }
+    })
+    .to_string()
+}
+
 fn check_hello_reply(text: &str) -> Result<(), String> {
     let val: serde_json::Value =
         serde_json::from_str(text).map_err(|e| format!("invalid Hello reply: {e}"))?;
@@ -622,6 +631,18 @@ mod tests {
     fn check_hello_ok() {
         let ok = r#"{"id":"abc","result":{"dora_version":"1.0.0-rc.4"}}"#;
         assert!(check_hello_reply(ok).is_ok());
+    }
+
+    /// dora 1.0 deserializes request params as an externally tagged
+    /// `ControlRequest` enum: the Hello params must be the wrapped
+    /// variant `{"Hello": {"dora_version": ...}}`, not a bare object.
+    #[test]
+    fn hello_request_wraps_dora_version_in_variant() {
+        let json = build_hello_request("abc-123");
+        let val: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(val["method"], "Hello");
+        assert_eq!(val["params"]["Hello"]["dora_version"], "1.0.0-rc.4");
+        assert!(val["params"].get("dora_version").is_none());
     }
 
     #[test]
