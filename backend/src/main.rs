@@ -13,6 +13,7 @@ mod model_catalog;
 mod monitoring;
 mod models;
 mod otel;
+mod otlp;
 mod profile;
 mod protocol;
 mod runtime;
@@ -152,7 +153,7 @@ async fn main() {
         .route("/api/live/recent", get(live_recent))
         .route("/api/live/command", post(live_command))
         .route("/api/live/command", get(live_command_queue))
-        .with_state(state)
+        .with_state(state.clone())
         .layer(CorsLayer::permissive());
 
     let bind_addr =
@@ -160,11 +161,36 @@ async fn main() {
     let addr = bind_addr.parse().expect("valid bind address");
     println!("dora-studio backend listening on http://{addr}");
 
+    // OTLP receiver (M11.5 D3): passive listener on 4318. dora nodes push
+    // spans here via OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318.
+    // Not fatal if the port is taken — the main app keeps serving.
+    let otlp_bind =
+        std::env::var("DORA_STUDIO_OTLP_ADDR").unwrap_or_else(|_| "127.0.0.1:4318".to_string());
+    let otlp_collector = state.monitoring.otel.clone();
+    let otlp_task = tokio::spawn(async move {
+        let otlp_addr = match otlp_bind.parse::<std::net::SocketAddr>() {
+            Ok(addr) => addr,
+            Err(e) => {
+                eprintln!("OTLP receiver disabled (invalid DORA_STUDIO_OTLP_ADDR): {e}");
+                return;
+            }
+        };
+        let app = otlp::receiver_router(otlp_collector);
+        println!("OTLP receiver listening on http://{otlp_addr}");
+        if let Err(e) = axum::Server::bind(&otlp_addr)
+            .serve(app.into_make_service())
+            .await
+        {
+            eprintln!("OTLP receiver stopped: {e}");
+        }
+    });
+
     axum::Server::bind(&addr)
         .serve(app.into_make_service())
         .with_graceful_shutdown(shutdown_signal())
         .await
         .expect("server failed");
+    otlp_task.abort();
 }
 
 struct ApiError {

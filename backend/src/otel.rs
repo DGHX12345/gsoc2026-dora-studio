@@ -217,6 +217,8 @@ struct OtelInner {
     last_error: Option<String>,
     sample_count: u64,
     last_poll_at: Option<u64>,
+    received_count: u64,
+    last_received_at: Option<u64>,
 }
 
 impl OtelCollector {
@@ -231,6 +233,8 @@ impl OtelCollector {
                 last_error: None,
                 sample_count: 0,
                 last_poll_at: None,
+                received_count: 0,
+                last_received_at: None,
             })),
             running: watch::channel(false).0,
         }
@@ -268,6 +272,25 @@ impl OtelCollector {
         *self.running.borrow()
     }
 
+    /// Appends pushed spans (M11.5 D3 OTLP receiver) to the ring buffer and
+    /// updates the receive stats. Returns the number of spans ingested.
+    pub async fn ingest(&self, spans: Vec<OtelSpan>) -> usize {
+        let count = spans.len();
+        if count == 0 {
+            return 0;
+        }
+        let mut inner = self.inner.write().await;
+        for span in spans {
+            if inner.spans.len() >= inner.capacity {
+                inner.spans.remove(0);
+            }
+            inner.spans.push(span);
+        }
+        inner.received_count += count as u64;
+        inner.last_received_at = Some(crate::metrics::unix_timestamp());
+        count
+    }
+
     /// Returns cached spans (newest first), optionally filtered by node and limited.
     pub async fn spans_for_node(&self, node: Option<&str>, limit: usize) -> Vec<OtelSpan> {
         let inner = self.inner.read().await;
@@ -297,6 +320,9 @@ impl OtelCollector {
     }
 
     /// Status: running flag, poll stats, endpoint, connected flag, last error.
+    ///
+    /// `connected` is true when either the last Jaeger poll succeeded or spans
+    /// have been received through the OTLP push receiver (M11.5 D3).
     pub async fn status(&self) -> serde_json::Value {
         let inner = self.inner.read().await;
         serde_json::json!({
@@ -304,9 +330,11 @@ impl OtelCollector {
             "sampleCount": inner.sample_count,
             "lastPollAt": inner.last_poll_at,
             "endpoint": inner.endpoint,
-            "connected": inner.connected,
+            "connected": inner.connected || inner.last_received_at.is_some(),
             "spanCount": inner.spans.len(),
             "lastError": inner.last_error,
+            "receivedCount": inner.received_count,
+            "lastReceivedAt": inner.last_received_at,
         })
     }
 }
@@ -859,5 +887,47 @@ mod tests {
         assert_eq!(status["enabled"], false);
         assert!(status["sampleCount"].as_u64().unwrap() >= 1);
         assert!(status["lastPollAt"].is_u64());
+    }
+
+    // -- Push ingestion (M11.5 D3) --
+
+    #[tokio::test]
+    async fn ingest_appends_spans_and_trims_capacity() {
+        let collector = OtelCollector::new("http://localhost:1".into());
+        collector.inner.write().await.capacity = 3;
+
+        let spans: Vec<OtelSpan> = (0..5)
+            .map(|i| OtelSpan {
+                span_id: format!("s{i}"),
+                ..stub_span("s")
+            })
+            .collect();
+        collector.ingest(spans).await;
+
+        let stored = collector.spans_for_node(None, 10).await;
+        assert_eq!(stored.len(), 3);
+        assert_eq!(stored[0].span_id, "s4");
+        assert_eq!(stored[2].span_id, "s2");
+    }
+
+    #[tokio::test]
+    async fn ingest_updates_received_stats() {
+        let collector = OtelCollector::new("http://localhost:1".into());
+        collector
+            .ingest(vec![stub_span("s1"), stub_span("s2")])
+            .await;
+
+        let status = collector.status().await;
+        assert_eq!(status["receivedCount"], 2);
+        assert!(status["lastReceivedAt"].is_u64());
+    }
+
+    #[tokio::test]
+    async fn status_reports_connected_after_received_spans_without_polling() {
+        let collector = OtelCollector::new("http://localhost:1".into());
+        assert_eq!(collector.status().await["connected"], false);
+
+        collector.ingest(vec![stub_span("s1")]).await;
+        assert_eq!(collector.status().await["connected"], true);
     }
 }

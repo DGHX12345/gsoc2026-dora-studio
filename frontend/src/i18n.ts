@@ -135,6 +135,7 @@ type Messages = {
     enable: string
     statusOff: string
     statusOn: string
+    otelPushHint: string
   }
   liveFeed: {
     label: string
@@ -307,6 +308,7 @@ const messages: Record<Locale, Messages> = {
       enable: '一键开启',
       statusOff: '已关闭',
       statusOn: '采集中',
+      otelPushHint: '或直接推送：dora 节点设置 OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318，Studio 内置接收器直接接收 spans（无需 Jaeger）',
     },
     liveFeed: {
       label: '实时数据',
@@ -477,6 +479,7 @@ const messages: Record<Locale, Messages> = {
       enable: 'Enable',
       statusOff: 'off',
       statusOn: 'collecting',
+      otelPushHint: 'Or push directly: set OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318 on dora nodes — the built-in Studio receiver accepts spans directly (no Jaeger needed)',
     },
     liveFeed: {
       label: 'Live Feed',

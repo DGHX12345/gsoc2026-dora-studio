@@ -207,6 +207,7 @@
           <li>Start dora nodes with <code>OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317</code></li>
           <li>Studio queries the Jaeger API at <code>{{ otelEndpoint }}</code> (override with <code>DORA_OTEL_QUERY_ENDPOINT</code>)</li>
         </ol>
+        <p style="margin-top: 0.5rem;">{{ t.monitoring.otelPushHint }}</p>
       </div>
       <div v-else>
         <FlameGraph
