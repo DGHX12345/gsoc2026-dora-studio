@@ -92,15 +92,8 @@ impl CoordinatorWsClient {
 
         // Spawn write loop
         let write_state = Arc::clone(&write_half);
-        tokio::spawn(async move {
-            while let Some(cmd) = cmd_rx.recv().await {
-                let frame = build_text_frame(&cmd.text);
-                let mut w = write_state.lock().await;
-                if w.write_all(&frame).await.is_err() {
-                    break;
-                }
-            }
-        });
+        let pending_state = Arc::clone(&shared);
+        tokio::spawn(client_write_loop(cmd_rx, write_state, pending_state));
 
         // Send Hello handshake
         let hello_id = Uuid::new_v4();
@@ -217,7 +210,7 @@ impl CoordinatorWsClient {
     /// Fetch full node info for ALL running nodes (GetNodeInfo takes no
     /// parameters and returns every node across all dataflows).
     pub async fn all_node_infos(&self) -> Result<Vec<NodeInfo>, String> {
-        let result = self.request("GetNodeInfo", serde_json::json!({})).await?;
+        let result = self.request("GetNodeInfo", get_node_info_params()).await?;
         extract_node_infos(result)
     }
 
@@ -227,11 +220,7 @@ impl CoordinatorWsClient {
             .parse()
             .map_err(|_| format!("invalid dataflow id: {dataflow_id}"))?;
 
-        let params = serde_json::json!({
-            "dataflow_id": dataflow_uuid.to_string(),
-            "node_id": node_id,
-            "operator_id": null,
-        });
+        let params = reload_params(&dataflow_uuid.to_string(), node_id);
         self.request("Reload", params).await?;
         Ok(())
     }
@@ -531,6 +520,27 @@ fn extract_node_infos(result: serde_json::Value) -> Result<Vec<NodeInfo>, String
     Ok(nodes.0)
 }
 
+/// Write loop: registers each request in `pending` (so the read loop can
+/// correlate the reply) and writes the frame. Generic over the writer for
+/// duplex-based tests.
+async fn client_write_loop<W>(
+    mut cmd_rx: mpsc::UnboundedReceiver<ClientCommand>,
+    write_state: Arc<Mutex<W>>,
+    pending_state: Arc<Mutex<SharedState>>,
+) where
+    W: tokio::io::AsyncWriteExt + Unpin,
+{
+    while let Some(cmd) = cmd_rx.recv().await {
+        let id = extract_id(&cmd.text).unwrap_or_default();
+        pending_state.lock().await.pending.push((id, cmd.reply_tx));
+        let frame = build_text_frame(&cmd.text);
+        let mut w = write_state.lock().await;
+        if w.write_all(&frame).await.is_err() {
+            break;
+        }
+    }
+}
+
 /// Builds the Hello JSON-RPC request.
 ///
 /// dora 1.0 deserializes params as an externally tagged `ControlRequest`
@@ -543,6 +553,23 @@ fn build_hello_request(id: &str) -> String {
         "params": { "Hello": { "dora_version": DORA_VERSION } }
     })
     .to_string()
+}
+
+/// Params for GetNodeInfo: an externally tagged unit variant serializes
+/// as a bare string.
+fn get_node_info_params() -> serde_json::Value {
+    serde_json::Value::String("GetNodeInfo".to_string())
+}
+
+/// Params for Reload: struct variant fields wrapped in the variant name.
+fn reload_params(dataflow_id: &str, node_id: &str) -> serde_json::Value {
+    serde_json::json!({
+        "Reload": {
+            "dataflow_id": dataflow_id,
+            "node_id": node_id,
+            "operator_id": null,
+        }
+    })
 }
 
 fn check_hello_reply(text: &str) -> Result<(), String> {
@@ -567,6 +594,73 @@ mod tests {
     async fn all_node_infos_errors_when_not_connected() {
         let client = CoordinatorWsClient::new();
         assert!(client.all_node_infos().await.is_err());
+    }
+
+    /// Regression: the write loop must register the request in `pending`
+    /// before writing the frame, otherwise the read loop can never match
+    /// the reply and every request fails with "request channel closed".
+    #[tokio::test]
+    async fn write_loop_registers_pending_before_writing() {
+        use tokio::io::AsyncReadExt;
+
+        let (server, mut client) = tokio::io::duplex(64);
+        let write_state = Arc::new(tokio::sync::Mutex::new(server));
+        let shared = Arc::new(tokio::sync::Mutex::new(SharedState {
+            cmd_tx: None,
+            pending: Vec::new(),
+        }));
+        let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
+        let (reply_tx, _reply_rx) = oneshot::channel();
+
+        let loop_task = tokio::spawn(client_write_loop(
+            cmd_rx,
+            write_state,
+            Arc::clone(&shared),
+        ));
+
+        cmd_tx
+            .send(ClientCommand {
+                text: r#"{"id":"abc-123","method":"GetNodeInfo","params":"GetNodeInfo"}"#
+                    .to_string(),
+                reply_tx,
+            })
+            .unwrap();
+        tokio::task::yield_now().await;
+
+        let st = shared.lock().await;
+        assert_eq!(st.pending.len(), 1);
+        assert_eq!(st.pending[0].0, "abc-123");
+        drop(st);
+
+        let mut buf = vec![0u8; 256];
+        let n = tokio::time::timeout(
+            std::time::Duration::from_millis(200),
+            client.read(&mut buf),
+        )
+        .await
+        .expect("frame written to socket")
+        .expect("read ok");
+        assert!(n > 0);
+
+        loop_task.abort();
+    }
+
+    /// dora 1.0 deserializes params as an externally tagged
+    /// `ControlRequest` enum; a unit variant serializes as a bare string.
+    #[test]
+    fn get_node_info_params_is_bare_variant_string() {
+        let params = get_node_info_params();
+        assert_eq!(params, serde_json::json!("GetNodeInfo"));
+    }
+
+    /// Struct variants wrap their fields: `{"Reload": {...}}`.
+    #[test]
+    fn reload_params_wrap_fields_in_variant() {
+        let params = reload_params("df-1", "node-a");
+        assert_eq!(params["Reload"]["dataflow_id"], "df-1");
+        assert_eq!(params["Reload"]["node_id"], "node-a");
+        assert!(params["Reload"]["operator_id"].is_null());
+        assert!(params.get("dataflow_id").is_none());
     }
 
     /// dora 1.0 wraps the GetNodeInfo reply in an externally tagged
