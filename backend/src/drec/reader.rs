@@ -23,6 +23,8 @@ pub enum DrecError {
     UnsupportedVersion(u16),
     RecordTooLarge { size: usize, max: usize },
     CorruptRecord(String),
+    /// The file ends in the middle of a record (writer was killed).
+    TruncatedRecord,
 }
 
 impl std::fmt::Display for DrecError {
@@ -35,6 +37,7 @@ impl std::fmt::Display for DrecError {
                 write!(f, "record too large: {size} bytes (max {max})")
             }
             Self::CorruptRecord(msg) => write!(f, "corrupt record: {msg}"),
+            Self::TruncatedRecord => write!(f, "recording ends mid-record"),
         }
     }
 }
@@ -201,7 +204,12 @@ fn read_record_optional<R: Read>(r: &mut R) -> DrecResult<Option<RecordEntry>> {
         return Ok(None);
     }
 
-    read_record_body(r, &len_buf).map(Some)
+    match read_record_body(r, &len_buf) {
+        // A tail cut mid-record means the writer was interrupted; the
+        // complete records up to this point are still valid.
+        Err(DrecError::TruncatedRecord) => Ok(None),
+        other => other.map(Some),
+    }
 }
 
 /// Must read a record; returns Err if anything goes wrong.
@@ -229,7 +237,7 @@ fn read_record_body<R: Read>(r: &mut R, len_buf: &[u8; 4]) -> DrecResult<RecordE
     match r.read_exact(&mut buf) {
         Ok(()) => {}
         Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => {
-            return Err(DrecError::CorruptRecord("truncated record body".into()));
+            return Err(DrecError::TruncatedRecord);
         }
         Err(e) => return Err(DrecError::Io(e)),
     }
@@ -325,6 +333,30 @@ mod tests {
         let dir = std::env::temp_dir().join("dora-studio-tests");
         std::fs::create_dir_all(&dir).ok();
         dir.join(name)
+    }
+
+    /// Real dora 1.0 recording (M15.5 D5 fixture): the B5 live-demo
+    /// dataflow recorded with dora 1.0.0-rc.4, truncated by SIGTERM
+    /// (no footer). Confirms the container format stayed compatible.
+    #[test]
+    fn opens_dora10_real_recording() {
+        let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/dora10.drec");
+        let mut reader = DrecReader::open(&path).expect("dora 1.0 recording opens");
+
+        let header = reader.header().clone();
+        assert_eq!(header.version, 1);
+        assert!(!header.descriptor_yaml.is_empty());
+        assert!(header.descriptor_yaml.starts_with(b"#"));
+
+        let mut count = 0u64;
+        reader
+            .scan_entries(|_, _| count += 1)
+            .expect("scan handles the truncated tail");
+        assert!(count > 100, "real recording has entries, got {count}");
+
+        let footer = reader.read_footer().expect("footer read ok");
+        assert!(footer.is_none(), "SIGTERM-truncated recording has no footer");
     }
 
     fn cleanup(path: &std::path::Path) {
