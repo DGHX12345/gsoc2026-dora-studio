@@ -19,6 +19,15 @@ mod tests {
     }
 
     #[test]
+    fn normalizes_dora_cli_output() {
+        // 1.0's `dora --version` prints "dora-cli 1.0.0-rc.4".
+        assert_eq!(
+            normalize_dora_version("dora-cli 1.0.0-rc.4\n"),
+            "dora 1.0.0-rc.4"
+        );
+    }
+
+    #[test]
     fn empty_output_falls_back_to_unknown() {
         assert_eq!(normalize_dora_version(""), "unknown");
         assert_eq!(normalize_dora_version("\n"), "unknown");
@@ -46,13 +55,13 @@ struct DoraListEntry {
 /// `"dora 1.0.0-rc.4"`; `"unknown"` when the output is empty.
 fn normalize_dora_version(raw: &str) -> String {
     let line = raw.lines().next().unwrap_or("").trim();
-    if line.is_empty() {
-        return "unknown".to_string();
-    }
-    if line.starts_with("dora ") {
-        line.to_string()
-    } else {
-        format!("dora {line}")
+    let version = line
+        .strip_prefix("dora-cli ")
+        .or_else(|| line.strip_prefix("dora "));
+    match version {
+        Some(v) if !v.is_empty() => format!("dora {v}"),
+        _ if line.is_empty() => "unknown".to_string(),
+        _ => format!("dora {line}"),
     }
 }
 
