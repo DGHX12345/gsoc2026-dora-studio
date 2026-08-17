@@ -439,7 +439,7 @@ function toggleLiveFeed() {
   const engine = new LiveFeedEngine(
     async (sinceTs) => (await getLiveRecent(sinceTs)).frames,
     (batch, tf) => toolRegistry.broadcastBatch(batch, tf),
-    100,
+    50,
     defaultSinceTs(Date.now() * 1_000_000),
   )
   engine.subscribe(() => { liveFeedStatus.value = engine.status })

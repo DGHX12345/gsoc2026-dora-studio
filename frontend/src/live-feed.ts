@@ -55,7 +55,7 @@ export class LiveFeedEngine {
   constructor(
     private readonly fetchRecent: (sinceTs: number) => Promise<LiveFrame[]>,
     private readonly broadcast: (batch: ToolBatch, tf?: TfTree) => void,
-    private readonly intervalMs = 100,
+    private readonly intervalMs = 50,
     initialSinceTs = 0,
   ) {
     this.sinceTs = initialSinceTs

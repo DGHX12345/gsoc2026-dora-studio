@@ -196,3 +196,19 @@ test('engine applies tf payloads to a tree passed to broadcast', async () => {
   assert.ok(broadcastTfs[0] !== undefined)
   assert.ok(broadcastTfs[1] !== undefined)
 })
+
+test('default poll interval is 50ms for the 20Hz physics mirror (M15 C4)', () => {
+  const original = globalThis.setInterval
+  let captured = 0
+  globalThis.setInterval = ((_fn: () => void, ms?: number) => {
+    captured = ms ?? 0
+    return 1 as unknown as ReturnType<typeof setInterval>
+  }) as typeof setInterval
+  try {
+    const engine = new LiveFeedEngine(async () => [], () => {})
+    engine.start()
+  } finally {
+    globalThis.setInterval = original
+  }
+  assert.equal(captured, 50)
+})
