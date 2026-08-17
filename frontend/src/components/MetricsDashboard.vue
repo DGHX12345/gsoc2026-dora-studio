@@ -57,7 +57,13 @@
       <article :class="['metric-card', 'large-metric', errorNodes > 0 ? 'warning' : 'success']">
         <span>Health</span>
         <strong>{{ errorNodes > 0 ? `${errorNodes} warning(s)` : 'All healthy' }}</strong>
-        <small>{{ healthDetail }}</small>
+        <details v-if="errorNodes > 0" class="health-details">
+          <summary>{{ t.monitoring.healthDetails }}</summary>
+          <ul class="health-reasons">
+            <li v-for="reason in healthReasons" :key="reason">{{ reason }}</li>
+          </ul>
+        </details>
+        <small v-else>{{ healthDetail }}</small>
       </article>
     </div>
 
@@ -80,7 +86,7 @@
       <div v-else class="chart-container">
         <canvas ref="chartCanvasEl" class="metrics-canvas" width="900" height="260"></canvas>
         <div class="chart-legend">
-          <span v-for="(color, nodeId) in nodeColors" :key="nodeId" class="chart-legend-item">
+          <span v-for="(color, nodeId) in nodeColors" :key="nodeId" class="chart-legend-item" :title="nodeId">
             <span class="legend-swatch" :style="{ background: color }"></span>
             {{ shortenNodeId(nodeId) }}
           </span>
@@ -367,18 +373,18 @@ const errorNodes = computed(() =>
   ).length
 )
 const cpuStatusText = computed(() => avgCpu.value > 80 ? 'High load' : avgCpu.value > 50 ? 'Moderate' : 'Normal')
-const healthDetail = computed(() => {
-  if (errorNodes.value > 0) {
-    const reasons: string[] = []
-    nodes.value.forEach(n => {
-      if (n.current.status !== 'Running') reasons.push(`${shortenNodeId(n.nodeId)}: ${n.current.status}`)
-      if (n.current.cpuPercent > 90) reasons.push(`${shortenNodeId(n.nodeId)}: high CPU`)
-      if (n.current.memoryMb > 4096) reasons.push(`${shortenNodeId(n.nodeId)}: high mem`)
-    })
-    return reasons.slice(0, 2).join('; ')
-  }
-  return 'All nodes running normally'
+const healthReasons = computed(() => {
+  const reasons: string[] = []
+  nodes.value.forEach(n => {
+    if (n.current.status !== 'Running') reasons.push(`${shortenNodeId(n.nodeId)}: ${n.current.status}`)
+    if (n.current.cpuPercent > 90) reasons.push(`${shortenNodeId(n.nodeId)}: high CPU`)
+    if (n.current.memoryMb > 4096) reasons.push(`${shortenNodeId(n.nodeId)}: high mem`)
+  })
+  return reasons
 })
+const healthDetail = computed(() =>
+  healthReasons.value.length > 0 ? healthReasons.value.join('; ') : 'All nodes running normally'
+)
 const chartTimeRange = computed(() => CHART_WINDOW_SECS)
 
 // --- Node colors for chart ---
@@ -661,8 +667,12 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   gap: 4px;
-  font-size: 11px;
-  color: var(--col-text-secondary, #aaa);
+  font-size: 12px;
+  color: var(--text-secondary, #aaa);
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .legend-swatch {
@@ -670,6 +680,32 @@ onUnmounted(() => {
   height: 10px;
   border-radius: 2px;
   display: inline-block;
+  flex-shrink: 0;
+}
+
+.health-details {
+  margin-top: 6px;
+}
+
+.health-details summary {
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--text-primary);
+  user-select: none;
+}
+
+.health-reasons {
+  list-style: disc;
+  margin: 6px 0 0 18px;
+  padding: 0;
+  max-height: 140px;
+  overflow-y: auto;
+}
+
+.health-reasons li {
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-secondary);
 }
 
 .node-gauge-grid {
@@ -679,8 +715,8 @@ onUnmounted(() => {
 }
 
 .node-gauge-card {
-  background: var(--col-surface, rgba(255,255,255,0.03));
-  border: 1px solid var(--col-border, rgba(255,255,255,0.06));
+  background: var(--bg-surface, rgba(255,255,255,0.03));
+  border: 1px solid var(--border-card, rgba(255,255,255,0.06));
   border-radius: var(--radius-md, 6px);
   padding: 12px;
 }
@@ -694,8 +730,13 @@ onUnmounted(() => {
 
 .node-id-label {
   font-family: 'SF Mono', 'Fira Code', monospace;
-  font-size: 11px;
-  color: var(--col-text, #eee);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary, #eee);
+  max-width: 62%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .status-chip {

@@ -136,6 +136,7 @@ type Messages = {
     statusOff: string
     statusOn: string
     otelPushHint: string
+    healthDetails: string
   }
   liveFeed: {
     label: string
@@ -309,6 +310,7 @@ const messages: Record<Locale, Messages> = {
       statusOff: '已关闭',
       statusOn: '采集中',
       otelPushHint: '或直接推送：dora 节点设置 DORA_OTLP_ENDPOINT=http://localhost:4317（gRPC），Studio 内置接收器直接接收 spans（无需 Jaeger）；标准 OTel HTTP 客户端可推 http://localhost:4318',
+      healthDetails: '查看详情',
     },
     liveFeed: {
       label: '实时数据',
@@ -480,6 +482,7 @@ const messages: Record<Locale, Messages> = {
       statusOff: 'off',
       statusOn: 'collecting',
       otelPushHint: 'Or push directly: set DORA_OTLP_ENDPOINT=http://localhost:4317 (gRPC) on dora nodes — the built-in Studio receiver accepts spans directly (no Jaeger needed). Standard OTel HTTP clients can push to http://localhost:4318',
+      healthDetails: 'View details',
     },
     liveFeed: {
       label: 'Live Feed',
