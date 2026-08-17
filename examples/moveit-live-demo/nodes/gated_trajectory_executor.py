@@ -89,7 +89,10 @@ class TrajectoryExecutor:
         self.prev_waypoint: Optional[np.ndarray] = None
 
         self.interpolation_progress = 0.0
-        self.interpolation_speed = 0.1
+        # Demo divergence from the moveit executor (0.1): 0.05 gives the
+        # heavily-damped mujoco arm ~1s per waypoint so the physics can
+        # track the commands instead of lagging behind the interpolation.
+        self.interpolation_speed = 0.05
 
         self.is_executing = False
         self.execution_count = 0

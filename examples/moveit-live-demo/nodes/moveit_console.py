@@ -60,6 +60,14 @@ def build_plan_request(start, goal, planner="rrt_connect", max_time=5.0):
 
 
 def build_scene_command(action, obj):
+    """B6 console scene command → moveit scene command. The moveit
+    planning scene reads the remove target from the top-level `name`
+    (B6 nests it under `object`)."""
+    if action == "remove":
+        name = obj.get("name") if isinstance(obj, dict) else None
+        if name is None:
+            return None
+        return {"action": "remove", "name": name}
     return {"action": action, "object": obj}
 
 
@@ -99,6 +107,14 @@ def advance_watermark(since_seq, next_seq):
     return since_seq
 
 
+def initial_watermark(body):
+    """First poll: adopt the backend's next_seq minus one (the watermark
+    means "last consumed seq"), so historical commands are not replayed on
+    every console restart. Exactly-next_seq would trip the restart
+    detection in advance_watermark (since >= next -> reset to 0)."""
+    return max(0, body.get("next_seq", 1) - 1)
+
+
 def send_json(node, output_id, payload):
     encoded = json.dumps(payload).encode()
     node.send_output(output_id, pa.array(list(encoded), type=pa.uint8()))
@@ -113,6 +129,7 @@ def main():
     current_joints = None
     pending_solution = None
     since_seq = 0
+    skip_first = True
 
     while True:
         event = node.try_recv()
@@ -152,6 +169,10 @@ def main():
             with urllib.request.urlopen(req, timeout=2.0) as resp:
                 body = json.loads(resp.read().decode("utf-8"))
             next_seq = body.get("next_seq", 0)
+            if skip_first:
+                since_seq = initial_watermark(body)
+                skip_first = False
+                continue
             since_seq = advance_watermark(since_seq, next_seq)
             for command in body.get("commands", []):
                 seq = command.get("seq", since_seq)
@@ -179,10 +200,11 @@ def main():
                 elif kind == "scene":
                     action = command.get("action")
                     obj = command.get("object")
-                    if action is None or obj is None:
+                    scene = build_scene_command(action, obj) if action else None
+                    if scene is None:
                         print("[Console] Invalid scene command, skipped")
                     else:
-                        send_json(node, "scene_command", build_scene_command(action, obj))
+                        send_json(node, "scene_command", scene)
                 since_seq = max(since_seq, seq)
         except (urllib.error.URLError, OSError, json.JSONDecodeError):
             pass  # backend not up yet — keep polling

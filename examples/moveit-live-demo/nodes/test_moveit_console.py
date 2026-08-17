@@ -14,6 +14,7 @@ from moveit_console import (
     build_ik_request,
     build_plan_request,
     build_scene_command,
+    initial_watermark,
     parse_ik_solution,
     parse_target,
     plan_ready,
@@ -65,6 +66,29 @@ class TestRequestBuilders(unittest.TestCase):
     def test_build_scene_command_passthrough(self):
         obj = {"name": "box1", "type": "box", "position": [0.3, 0, 0.4], "dimensions": [0.1, 0.1, 0.1]}
         self.assertEqual(build_scene_command("add", obj), {"action": "add", "object": obj})
+
+    def test_build_scene_remove_moves_name_to_top_level(self):
+        # The moveit planning scene reads remove targets from the
+        # top-level `name`; the B6 console nests it under `object`.
+        self.assertEqual(
+            build_scene_command("remove", {"name": "box_1"}),
+            {"action": "remove", "name": "box_1"},
+        )
+
+    def test_build_scene_remove_without_name_returns_none(self):
+        self.assertIsNone(build_scene_command("remove", {}))
+        self.assertIsNone(build_scene_command("remove", None))
+
+    def test_initial_watermark_is_next_seq_minus_one(self):
+        # Watermark semantics: "last consumed seq" — exactly-next_seq
+        # would trip the restart detection (since >= next -> reset 0).
+        self.assertEqual(initial_watermark({"next_seq": 17}), 16)
+
+    def test_initial_watermark_defaults_to_zero(self):
+        self.assertEqual(initial_watermark({}), 0)
+
+    def test_initial_watermark_never_negative(self):
+        self.assertEqual(initial_watermark({"next_seq": 0}), 0)
 
     def test_build_gate_command_envelope(self):
         self.assertEqual(build_gate_command("execute"), {"command": "execute"})

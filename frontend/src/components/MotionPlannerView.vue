@@ -64,7 +64,7 @@
           </div>
         </div>
         <div class="scene-actions">
-          <div class="console-field-row">
+          <div class="console-field-row console-field-stack">
             <label>{{ t.motionConsole.boxPos }}</label>
             <div class="console-target-inputs">
               <input v-model="boxX" type="text" class="console-input" :title="t.motionConsole.targetX" />
@@ -496,11 +496,12 @@ const { t } = useI18n()
 const targetX = ref('0.55')
 const targetY = ref('0.20')
 const targetZ = ref('0.30')
-// Arm-demo default: inside the ur5e workspace at the planner's link
-// plane (z ~ 0.36) so a single added box visibly blocks direct paths.
+// Arm-demo default: inside the ur5e workspace at the arm's link plane
+// (the real DH kinematics put the zero-config links at z ~ 0.16), so a
+// single added box visibly blocks direct paths.
 const boxX = ref('0.45')
-const boxY = ref('0.20')
-const boxZ = ref('0.36')
+const boxY = ref('0.15')
+const boxZ = ref('0.16')
 const selectedPlanner = ref('simple_planner')
 const plannerOptions = ref<{ id: string; label: string }[]>([
   { id: 'simple_planner', label: 'simple_planner (A* grid)' },

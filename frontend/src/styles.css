@@ -3024,6 +3024,18 @@ td span {
   margin-bottom: 10px;
 }
 
+/* Narrow-panel variant (Planning Scene): label above the inputs so the
+   row never overflows the 340px column. */
+.console-field-stack {
+  align-items: flex-start;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.console-field-stack label {
+  min-width: 0;
+}
+
 .console-field-row label {
   color: var(--text-primary);
   font-size: 13px;
