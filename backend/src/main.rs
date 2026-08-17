@@ -208,7 +208,7 @@ async fn main() {
             .serve(grpc_addr)
             .await
         {
-            eprintln!("OTLP gRPC receiver stopped: {e}");
+            eprintln!("OTLP gRPC receiver stopped: {e:?}");
         }
     });
 
