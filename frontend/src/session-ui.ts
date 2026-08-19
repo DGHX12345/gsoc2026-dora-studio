@@ -46,7 +46,9 @@ export function canStartDataflow(runtimeStatus: string, session: SessionStatus):
 }
 
 export function canStopDataflow(runtimeStatus: string, session: SessionStatus): boolean {
-  return session.lifecycleSupported && runtimeStatus === 'running'
+  // A failed dataflow can still be stopped: dora stop cleans up any
+  // leftover coordinator state and lets the user recover.
+  return session.lifecycleSupported && (runtimeStatus === 'running' || runtimeStatus === 'failed')
 }
 
 export type RecordingAction = 'record' | 'recording' | 'disabled'

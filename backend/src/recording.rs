@@ -58,7 +58,10 @@ fn build_record_command(binary: &str, dataflow_path: &Path, output_path: &Path) 
         .arg("record")
         .arg(dataflow_path)
         .arg("-o")
-        .arg(output_path);
+        .arg(output_path)
+        // A terminal stdin flips dora record into interactive mode;
+        // recordings run non-interactively.
+        .stdin(std::process::Stdio::null());
     command
 }
 
@@ -414,7 +417,7 @@ mod tests {
                 ),
             };
             let script = format!(
-                "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{args}'\nif [ \"$1\" = \"--version\" ]; then printf 'dora {version}\\n'; exit 0; fi\nif [ \"$1\" = \"record\" ]; then {record_body}; fi\nexit 2\n",
+                "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{args}'\nif [ \"$1\" = \"--version\" ]; then printf 'dora {version}\\n'; exit 0; fi\nif [ \"$1\" = \"record\" ]; then if [ -t 0 ]; then printf 'stdin-tty\\n' >> '{args}'; else printf 'stdin-null\\n' >> '{args}'; fi; {record_body}; fi\nexit 2\n",
                 args = invocation_path.display(),
             );
             fs::write(&path, script).unwrap();
@@ -464,6 +467,10 @@ mod tests {
             .invocations()
             .iter()
             .any(|line| line.starts_with("record examples/live-demo/dataflow.yml -o ")));
+        // Regression: a terminal stdin flips dora record into
+        // interactive mode; Studio must pass a non-terminal stdin.
+        assert!(fake.invocations().iter().any(|line| line == "stdin-null"));
+        assert!(!fake.invocations().iter().any(|line| line == "stdin-tty"));
 
         let stopped = controller.stop().await;
         assert_eq!(stopped.status, "idle");

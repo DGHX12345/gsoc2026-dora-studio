@@ -56,7 +56,10 @@ fn build_start_command(binary: &str, dataflow_path: &std::path::Path, name: &str
         .arg("start")
         .arg(dataflow_path)
         .arg("--name")
-        .arg(name);
+        .arg(name)
+        // dora start attaches to the dataflow when stdin is a terminal;
+        // a null stdin forces the non-interactive detach path.
+        .stdin(std::process::Stdio::null());
     command
 }
 
@@ -85,13 +88,20 @@ async fn read_child_stderr(child: &mut Child) -> String {
     String::from_utf8_lossy(&buffer).to_string()
 }
 
+const STDERR_SUFFIX_LIMIT: usize = 500;
+
 fn stderr_suffix(stderr: &str) -> String {
     let trimmed = stderr.trim();
     if trimmed.is_empty() {
-        String::new()
-    } else {
-        format!(": {trimmed}")
+        return String::new();
     }
+    let truncated: String = trimmed.chars().take(STDERR_SUFFIX_LIMIT).collect();
+    let ellipsis = if trimmed.chars().count() > STDERR_SUFFIX_LIMIT {
+        "…"
+    } else {
+        ""
+    };
+    format!(": {truncated}{ellipsis}")
 }
 
 impl RuntimeManager {
@@ -552,7 +562,9 @@ fn repo_root() -> PathBuf {
 
 #[cfg(test)]
 mod tests {
-    use super::{build_start_command, build_stop_command, dataflow_name, should_retry_start};
+    use super::{
+        build_start_command, build_stop_command, dataflow_name, should_retry_start, stderr_suffix,
+    };
     use std::{
         ffi::OsString,
         fs,
@@ -615,6 +627,20 @@ mod tests {
     #[test]
     fn dataflow_name_is_unique_per_dataflow_id() {
         assert_ne!(dataflow_name("alpha", 0), dataflow_name("beta", 0));
+    }
+
+    #[test]
+    fn stderr_suffix_truncates_long_output() {
+        let long = "x".repeat(2000);
+        let suffix = stderr_suffix(&long);
+        assert!(
+            suffix.len() <= 505,
+            "suffix stays bounded, got {}",
+            suffix.len()
+        );
+        assert!(suffix.ends_with('…'));
+        assert_eq!(stderr_suffix(""), "");
+        assert_eq!(stderr_suffix("  short  "), ": short");
     }
 
     #[test]
@@ -704,7 +730,7 @@ mod tests {
                 _ => format!("rm -f '{state}'; exit 0", state = state_path.display()),
             };
             let script = format!(
-                "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{args}'\nif [ \"$1\" = \"--version\" ]; then printf 'dora {version}\\n'; exit 0; fi\nif [ \"$1\" = \"start\" ]; then {start_body}; fi\nif [ \"$1\" = \"stop\" ]; then {stop_body}; fi\nif [ \"$1\" = \"list\" ] && [ \"$2\" = \"--format\" ] && [ \"$3\" = \"json\" ]; then if [ -f '{state}' ]; then printf '[{{\"uuid\":\"df-1\",\"name\":\"%s\",\"status\":\"Running\",\"nodes\":2}}]\\n' \"$(cat '{state}')\"; exit 0; fi; printf '[]\\n'; exit 0; fi\nexit 2\n",
+                "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{args}'\nif [ \"$1\" = \"--version\" ]; then printf 'dora {version}\\n'; exit 0; fi\nif [ \"$1\" = \"start\" ]; then if [ -t 0 ]; then printf 'stdin-tty\\n' >> '{args}'; else printf 'stdin-null\\n' >> '{args}'; fi; {start_body}; fi\nif [ \"$1\" = \"stop\" ]; then {stop_body}; fi\nif [ \"$1\" = \"list\" ] && [ \"$2\" = \"--format\" ] && [ \"$3\" = \"json\" ]; then if [ -f '{state}' ]; then printf '[{{\"uuid\":\"df-1\",\"name\":\"%s\",\"status\":\"Running\",\"nodes\":2}}]\\n' \"$(cat '{state}')\"; exit 0; fi; printf '[]\\n'; exit 0; fi\nexit 2\n",
                 args = invocation_path.display(),
                 state = state_path.display(),
             );
@@ -750,6 +776,10 @@ mod tests {
             .invocations()
             .iter()
             .any(|line| line == "start /tmp/demo.yml --name studio-robot-perception-test"));
+        // Regression: a terminal stdin makes dora start attach instead
+        // of detaching; Studio must always pass a non-terminal stdin.
+        assert!(fake.invocations().iter().any(|line| line == "stdin-null"));
+        assert!(!fake.invocations().iter().any(|line| line == "stdin-tty"));
 
         let stopped = manager.stop().await;
         assert_eq!(stopped.status, "stopped");

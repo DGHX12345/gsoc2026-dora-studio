@@ -80,6 +80,12 @@ test('dataflow lifecycle buttons follow the version gate', () => {
   assert.equal(canStopDataflow('running', unsupported), false);
 });
 
+test('a failed dataflow can still be stopped for cleanup', () => {
+  const supported = session();
+  assert.equal(canStopDataflow('failed', supported), true);
+  assert.equal(canStopDataflow('failed', session({ lifecycleSupported: false })), false);
+});
+
 test('recording action toggles between record, recording, and disabled', () => {
   assert.equal(recordingAction('idle', true), 'record');
   assert.equal(recordingAction('recording', true), 'recording');

@@ -141,6 +141,7 @@ impl DoraSessionManager {
         let mut command = Command::new(crate::dora_env::resolve_dora_bin());
         command
             .arg("up")
+            .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped());
 
@@ -195,6 +196,7 @@ impl DoraSessionManager {
         let mut command = Command::new(crate::dora_env::resolve_dora_bin());
         command
             .arg("down")
+            .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped());
 
