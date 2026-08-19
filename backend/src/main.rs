@@ -419,13 +419,27 @@ async fn moveit_snapshot() -> Json<models::MoveitSnapshotResponse> {
     Json(external::query_moveit_snapshot())
 }
 
-async fn dataflows() -> Result<Json<Vec<models::DataflowSummary>>, ApiError> {
-    project_scan::list_all_dataflows()
-        .map(Json)
-        .map_err(|error| ApiError {
-            status: StatusCode::INTERNAL_SERVER_ERROR,
-            message: format!("Failed to list dataflows: {error:?}"),
-        })
+async fn dataflows(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<Vec<models::DataflowSummary>>, ApiError> {
+    let mut dataflows = project_scan::list_all_dataflows().map_err(ApiError::from)?;
+    let rt = state.runtime.status().await;
+    let coord = coordinator::query_coordinator().await;
+
+    for df in &mut dataflows {
+        if rt.status == "running" && rt.dataflow_id.as_deref() == Some(&df.id) {
+            df.status = "running".to_string();
+        } else if coord.connected {
+            for cdf in &coord.dataflows {
+                if cdf.status == "running"
+                    && (df.name.contains(&cdf.name) || cdf.name.contains(&df.name))
+                {
+                    df.status = "running".to_string();
+                }
+            }
+        }
+    }
+    Ok(Json(dataflows))
 }
 
 async fn dataflow_definition(
@@ -709,10 +723,7 @@ async fn schema_operator(
 async fn projects_list() -> Result<Json<models::ProjectListResponse>, ApiError> {
     project_scan::list_projects()
         .map(|projects| Json(models::ProjectListResponse { projects }))
-        .map_err(|error| ApiError {
-            status: StatusCode::INTERNAL_SERVER_ERROR,
-            message: format!("Failed to list projects: {error:?}"),
-        })
+        .map_err(ApiError::from)
 }
 
 /// POST /api/projects/add — persist a user project dir (canonical, deduped).
