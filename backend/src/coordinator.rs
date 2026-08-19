@@ -1,9 +1,12 @@
-use crate::models::{CoordinatorDataflow, CoordinatorStatus};
+use crate::{
+    dora_env,
+    models::{CoordinatorDataflow, CoordinatorStatus},
+};
 use serde::Deserialize;
 
 #[cfg(test)]
 mod tests {
-    use super::{normalize_dora_version, running_dataflow_count, DoraListEntry};
+    use super::{running_dataflow_count, DoraListEntry};
 
     /// Real `dora 1.0` `dora list --format json` line (captured 2026-08-17).
     const DORA10_RUNNING_LINE: &str = r#"{"uuid":"01a00e7c-0349-79e6-9253-d0bff3dfb24b","name":"m155-smoke","status":"Running","nodes":5,"cpu":2.9987505674362183,"memory":33.906664}"#;
@@ -33,29 +36,32 @@ mod tests {
     #[test]
     fn normalizes_plain_version_line() {
         assert_eq!(
-            normalize_dora_version("dora 1.0.0-rc.4\n"),
+            crate::dora_env::normalize_dora_version("dora 1.0.0-rc.4\n"),
             "dora 1.0.0-rc.4"
         );
     }
 
     #[test]
     fn prefixes_version_without_dora_prefix() {
-        assert_eq!(normalize_dora_version("1.0.0-rc.4\n"), "dora 1.0.0-rc.4");
+        assert_eq!(
+            crate::dora_env::normalize_dora_version("1.0.0-rc.4\n"),
+            "dora 1.0.0-rc.4"
+        );
     }
 
     #[test]
     fn normalizes_dora_cli_output() {
         // 1.0's `dora --version` prints "dora-cli 1.0.0-rc.4".
         assert_eq!(
-            normalize_dora_version("dora-cli 1.0.0-rc.4\n"),
+            crate::dora_env::normalize_dora_version("dora-cli 1.0.0-rc.4\n"),
             "dora 1.0.0-rc.4"
         );
     }
 
     #[test]
     fn empty_output_falls_back_to_unknown() {
-        assert_eq!(normalize_dora_version(""), "unknown");
-        assert_eq!(normalize_dora_version("\n"), "unknown");
+        assert_eq!(crate::dora_env::normalize_dora_version(""), "unknown");
+        assert_eq!(crate::dora_env::normalize_dora_version("\n"), "unknown");
     }
 }
 
@@ -76,22 +82,6 @@ struct DoraListEntry {
     memory: Option<f64>,
 }
 
-/// Normalizes `dora --version` output to a display string like
-/// `"dora 1.0.0-rc.4"`; `"unknown"` when the output is empty.
-fn normalize_dora_version(raw: &str) -> String {
-    let line = raw.lines().next().unwrap_or("").trim();
-    let version = line
-        .strip_prefix("dora-cli ")
-        .or_else(|| line.strip_prefix("dora "));
-    match version {
-        Some(v) if !v.is_empty() => format!("dora {v}"),
-        _ if line.is_empty() => "unknown".to_string(),
-        _ => format!("dora {line}"),
-    }
-}
-
-static DORA_VERSION_CELL: tokio::sync::OnceCell<String> = tokio::sync::OnceCell::const_new();
-
 /// Counts running dataflows; dora 0.5 emits lowercase status while
 /// dora 1.0 emits PascalCase, so the match is case-insensitive.
 fn running_dataflow_count(entries: &[DoraListEntry]) -> u32 {
@@ -103,29 +93,12 @@ fn running_dataflow_count(entries: &[DoraListEntry]) -> u32 {
 
 /// Returns the installed dora CLI version, fetched once and cached.
 pub async fn dora_version() -> String {
-    DORA_VERSION_CELL
-        .get_or_init(|| async {
-            match tokio::time::timeout(
-                std::time::Duration::from_secs(3),
-                tokio::process::Command::new("dora")
-                    .arg("--version")
-                    .output(),
-            )
-            .await
-            {
-                Ok(Ok(out)) if out.status.success() => {
-                    normalize_dora_version(&String::from_utf8_lossy(&out.stdout))
-                }
-                _ => "unknown".to_string(),
-            }
-        })
-        .await
-        .clone()
+    dora_env::dora_version().await
 }
 
 pub async fn query_coordinator() -> CoordinatorStatus {
     let version = dora_version().await;
-    let output = tokio::process::Command::new("dora")
+    let output = tokio::process::Command::new(dora_env::resolve_dora_bin())
         .args(["list", "--format", "json"])
         .output()
         .await;

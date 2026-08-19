@@ -122,7 +122,9 @@ impl MetricsCollector {
         let handle = match &self.source {
             MetricsSource::Cli => tokio::spawn(async move {
                 poll_loop(inner, rx, || async {
-                    poll_cli_source().await.map(|nodes| (nodes, "cli".to_string()))
+                    poll_cli_source()
+                        .await
+                        .map(|nodes| (nodes, "cli".to_string()))
                 })
                 .await;
             }),
@@ -278,7 +280,7 @@ impl MetricsInner {
 /// Returns `Ok(empty)` when the coordinator is not reachable (normal idle state).
 /// Returns `Err` only for unexpected failures (dora binary missing, etc.).
 async fn poll_cli_source() -> Result<Vec<PolledNode>, String> {
-    let output = tokio::process::Command::new("dora")
+    let output = tokio::process::Command::new(crate::dora_env::resolve_dora_bin())
         .args(["node", "list", "--format", "json"])
         .output()
         .await
@@ -680,7 +682,9 @@ mod tests {
 
     // -- WS data source (M11.5 D2) --
 
-    fn ws_info(metrics: Option<crate::protocol::types::NodeMetricsInfo>) -> crate::protocol::types::NodeInfo {
+    fn ws_info(
+        metrics: Option<crate::protocol::types::NodeMetricsInfo>,
+    ) -> crate::protocol::types::NodeInfo {
         crate::protocol::types::NodeInfo {
             dataflow_id: uuid::Uuid::nil(),
             dataflow_name: Some("flow-ws".into()),

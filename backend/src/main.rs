@@ -1,9 +1,9 @@
 mod attribution;
 mod coordinator;
 mod coordinator_ws;
-mod daemon;
 mod dataflow_builder;
 mod dataflows;
+mod dora_env;
 mod drec;
 mod external;
 mod lerobot;
@@ -19,6 +19,7 @@ mod profile;
 mod protocol;
 mod runtime;
 mod schema_registry;
+mod session;
 
 use std::{path::PathBuf, sync::Arc};
 
@@ -33,7 +34,7 @@ use tower_http::{cors::CorsLayer, services::ServeDir};
 
 struct AppState {
     runtime: runtime::RuntimeHandle,
-    daemon: daemon::DaemonHandle,
+    session: session::SessionHandle,
     schemas: schema_registry::SchemaRegistry,
     ws_client: coordinator_ws::CoordinatorWsClient,
     recordings: drec::service::RecordingManager,
@@ -74,7 +75,7 @@ async fn main() {
 
     let state = Arc::new(AppState {
         runtime: runtime::RuntimeManager::new(),
-        daemon: daemon::DaemonManager::new(),
+        session: session::DoraSessionManager::new(),
         schemas: schema_registry::SchemaRegistry::new(),
         ws_client,
         recordings: drec::service::RecordingManager::new(),
@@ -111,6 +112,9 @@ async fn main() {
             post(runtime_reload),
         )
         .route("/api/coordinator/status", get(coordinator_status))
+        .route("/api/session/status", get(session_status))
+        .route("/api/session/start", post(session_start))
+        .route("/api/session/stop", post(session_stop))
         .route("/api/daemon/status", get(daemon_status))
         .route("/api/daemon/start", post(daemon_start))
         .route("/api/daemon/stop", post(daemon_stop))
@@ -195,9 +199,7 @@ async fn main() {
         let grpc_addr = match grpc_bind.parse::<std::net::SocketAddr>() {
             Ok(addr) => addr,
             Err(e) => {
-                eprintln!(
-                    "OTLP gRPC receiver disabled (invalid DORA_STUDIO_OTLP_GRPC_ADDR): {e}"
-                );
+                eprintln!("OTLP gRPC receiver disabled (invalid DORA_STUDIO_OTLP_GRPC_ADDR): {e}");
                 return;
             }
         };
@@ -427,16 +429,28 @@ async fn runtime_logs(State(state): State<Arc<AppState>>) -> Json<Vec<models::Lo
     Json(state.runtime.logs().await)
 }
 
-async fn daemon_status(State(state): State<Arc<AppState>>) -> Json<daemon::DaemonStatus> {
-    Json(state.daemon.status().await)
+async fn session_status(State(state): State<Arc<AppState>>) -> Json<session::SessionStatus> {
+    Json(state.session.status().await)
 }
 
-async fn daemon_start(State(state): State<Arc<AppState>>) -> Json<daemon::DaemonStatus> {
-    Json(state.daemon.start().await)
+async fn session_start(State(state): State<Arc<AppState>>) -> Json<session::SessionStatus> {
+    Json(state.session.start().await)
 }
 
-async fn daemon_stop(State(state): State<Arc<AppState>>) -> Json<daemon::DaemonStatus> {
-    Json(state.daemon.stop().await)
+async fn session_stop(State(state): State<Arc<AppState>>) -> Json<session::SessionStatus> {
+    Json(state.session.stop().await)
+}
+
+async fn daemon_status(State(state): State<Arc<AppState>>) -> Json<session::LegacyDaemonStatus> {
+    Json(session::legacy_daemon_status(&state.session.status().await))
+}
+
+async fn daemon_start(State(state): State<Arc<AppState>>) -> Json<session::LegacyDaemonStatus> {
+    Json(session::legacy_daemon_status(&state.session.start().await))
+}
+
+async fn daemon_stop(State(state): State<Arc<AppState>>) -> Json<session::LegacyDaemonStatus> {
+    Json(session::legacy_daemon_status(&state.session.stop().await))
 }
 
 async fn runtime_start(State(state): State<Arc<AppState>>) -> Json<models::RuntimeState> {
