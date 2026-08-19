@@ -141,6 +141,10 @@ fn parse_package(category: &str, yaml: &str) -> Vec<TypeDef> {
             } else if let Some(value) = trimmed.strip_prefix("description:") {
                 def.description = Some(clean_scalar(value));
             } else {
+                eprintln!(
+                    "urn_catalog: ignoring unknown type-level key '{}' in {category}",
+                    trimmed
+                );
                 in_fields = false;
                 in_params = false;
             }
@@ -189,6 +193,11 @@ mod tests {
         assert_eq!(image.arrow, "Struct");
         assert_eq!(image.fields.len(), 4);
         assert!(image
+            .description
+            .as_deref()
+            .unwrap_or_default()
+            .contains("image"));
+        assert!(image
             .fields
             .iter()
             .any(|field| field.name == "width" && field.field_type == "UInt32"));
@@ -203,9 +212,12 @@ mod tests {
         let catalog = Catalog::new();
         assert!(catalog.resolve_short_name("Image").is_some());
         // parameterized URN resolves via base
-        assert!(catalog
+        let audio = catalog
             .resolve("std/media/v1/AudioFrame[sample_type=f32]")
-            .is_some());
+            .expect("resolves");
+        assert!(!audio.params.is_empty());
+        assert_eq!(audio.params[0].name, "sample_type");
+        assert_eq!(audio.params[0].default.as_deref(), Some("f32"));
     }
 
     #[test]

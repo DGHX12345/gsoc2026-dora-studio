@@ -45,6 +45,7 @@ struct AppState {
     monitoring: monitoring::MonitoringController,
     profiles: profile::ProfileManager,
     live: live::LiveFeed,
+    catalog: urn_catalog::Catalog,
 }
 
 #[tokio::main]
@@ -89,6 +90,7 @@ async fn main() {
             &PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../profiles"),
         ),
         live: live::LiveFeed::new(),
+        catalog: urn_catalog::Catalog::new(),
     });
 
     // Wait for WS connect attempt to settle (up to 3s) before starting server
@@ -97,6 +99,11 @@ async fn main() {
     let app = Router::new()
         .nest_service("/models", ServeDir::new(models_dir.clone()))
         .route("/api/models", get(available_models))
+        .route("/api/types/catalog", get(types_catalog))
+        // Wildcard capture so multi-segment URNs (e.g. std/media/v1/Image)
+        // resolve as a single parameter; axum 0.6 `:param` only matches one
+        // segment and would reject URNs containing `/`.
+        .route("/api/types/*urn", get(types_get))
         .route("/api/health", get(health))
         .route("/api/system/status", get(system_status))
         .route("/api/dataflows", get(dataflows))
@@ -278,6 +285,20 @@ impl IntoResponse for ApiError {
 
 async fn health() -> Json<serde_json::Value> {
     Json(serde_json::json!({ "ok": true }))
+}
+
+async fn types_catalog(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {
+    Json(serde_json::json!({ "types": state.catalog.entries() }))
+}
+
+async fn types_get(
+    State(state): State<Arc<AppState>>,
+    Path(urn): Path<String>,
+) -> Result<Json<urn_catalog::TypeDef>, ApiError> {
+    state.catalog.resolve(&urn).map(Json).ok_or(ApiError {
+        status: StatusCode::NOT_FOUND,
+        message: format!("Unknown type URN: {urn}"),
+    })
 }
 
 async fn system_status() -> Json<models::SystemStatus> {
