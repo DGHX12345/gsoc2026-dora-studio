@@ -455,3 +455,38 @@ pub struct EntriesQuery {
 fn default_limit() -> usize {
     100
 }
+
+// --- Project explorer API types (M18 Task 1.4) ---
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectListResponse {
+    pub projects: Vec<crate::project_scan::ProjectSummary>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AddProjectRequest {
+    pub path: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ManualNodeRequest {
+    pub id: String,
+    pub path: String,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default)]
+    pub inputs: Vec<ManualPortRequest>,
+    #[serde(default)]
+    pub outputs: Vec<ManualPortRequest>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ManualPortRequest {
+    pub name: String,
+    #[serde(default)]
+    pub urn: String,
+}

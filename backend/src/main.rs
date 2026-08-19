@@ -140,6 +140,10 @@ async fn main() {
         .route("/api/dataflow/run", post(dataflow_run))
         .route("/api/schema/check", post(schema_check))
         .route("/api/schema/operator/:name", get(schema_operator))
+        .route("/api/projects/list", get(projects_list))
+        .route("/api/projects/add", post(projects_add))
+        .route("/api/projects/delete", post(projects_delete))
+        .route("/api/projects/nodes", post(projects_nodes))
         .route("/api/metrics/nodes", get(metrics_nodes))
         .route("/api/metrics/nodes/:id/history", get(metrics_node_history))
         .route("/api/otel/status", get(otel_status))
@@ -415,27 +419,13 @@ async fn moveit_snapshot() -> Json<models::MoveitSnapshotResponse> {
     Json(external::query_moveit_snapshot())
 }
 
-async fn dataflows(
-    State(state): State<Arc<AppState>>,
-) -> Result<Json<Vec<models::DataflowSummary>>, ApiError> {
-    let mut dataflows = dataflows::list_dataflows().map_err(ApiError::from)?;
-    let rt = state.runtime.status().await;
-    let coord = coordinator::query_coordinator().await;
-
-    for df in &mut dataflows {
-        if rt.status == "running" && rt.dataflow_id.as_deref() == Some(&df.id) {
-            df.status = "running".to_string();
-        } else if coord.connected {
-            for cdf in &coord.dataflows {
-                if cdf.status == "running"
-                    && (df.name.contains(&cdf.name) || cdf.name.contains(&df.name))
-                {
-                    df.status = "running".to_string();
-                }
-            }
-        }
-    }
-    Ok(Json(dataflows))
+async fn dataflows() -> Result<Json<Vec<models::DataflowSummary>>, ApiError> {
+    project_scan::list_all_dataflows()
+        .map(Json)
+        .map_err(|error| ApiError {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            message: format!("Failed to list dataflows: {error:?}"),
+        })
 }
 
 async fn dataflow_definition(
@@ -713,6 +703,65 @@ async fn schema_operator(
             status: StatusCode::NOT_FOUND,
             message: format!("Operator '{}' not found in schema registry", name),
         })
+}
+
+/// GET /api/projects/list — builtin + configured project dirs.
+async fn projects_list() -> Result<Json<models::ProjectListResponse>, ApiError> {
+    project_scan::list_projects()
+        .map(|projects| Json(models::ProjectListResponse { projects }))
+        .map_err(|error| ApiError {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            message: format!("Failed to list projects: {error:?}"),
+        })
+}
+
+/// POST /api/projects/add — persist a user project dir (canonical, deduped).
+async fn projects_add(
+    Json(req): Json<models::AddProjectRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    dora_env::add_project_dir(&req.path).map_err(|error| ApiError {
+        status: StatusCode::UNPROCESSABLE_ENTITY,
+        message: error,
+    })?;
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+/// POST /api/projects/delete — remove a user project dir from settings.
+async fn projects_delete(Json(req): Json<models::AddProjectRequest>) -> Json<serde_json::Value> {
+    let _ = dora_env::remove_project_dir(&req.path);
+    Json(serde_json::json!({ "ok": true }))
+}
+
+/// POST /api/projects/nodes — store a manually defined node for the palette.
+async fn projects_nodes(
+    Json(req): Json<models::ManualNodeRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let node = dora_env::ManualNode {
+        id: req.id,
+        path: req.path,
+        description: req.description,
+        inputs: req
+            .inputs
+            .into_iter()
+            .map(|port| dora_env::ManualPort {
+                name: port.name,
+                urn: port.urn,
+            })
+            .collect(),
+        outputs: req
+            .outputs
+            .into_iter()
+            .map(|port| dora_env::ManualPort {
+                name: port.name,
+                urn: port.urn,
+            })
+            .collect(),
+    };
+    dora_env::add_manual_node(node).map_err(|error| ApiError {
+        status: StatusCode::UNPROCESSABLE_ENTITY,
+        message: error,
+    })?;
+    Ok(Json(serde_json::json!({ "ok": true })))
 }
 
 /// GET /api/runtime/nodes/:dataflow_id — per-node runtime status.

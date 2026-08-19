@@ -110,8 +110,13 @@ pub(crate) fn add_project_dir(path: &str) -> Result<Vec<String>, String> {
 }
 
 pub(crate) fn remove_project_dir(path: &str) -> Result<Vec<String>, String> {
+    let canonical = std::fs::canonicalize(path)
+        .map_err(|error| format!("invalid project directory {path}: {error}"))?;
+    let canonical = canonical.to_string_lossy().to_string();
     let settings = mutate_settings(|settings| {
-        settings.project_dirs.retain(|existing| existing != path);
+        settings
+            .project_dirs
+            .retain(|existing| existing != &canonical);
     })?;
     Ok(settings.project_dirs)
 }
@@ -120,8 +125,10 @@ pub(crate) fn manual_nodes() -> Vec<ManualNode> {
     load_or_seed_settings().manual_nodes
 }
 
-pub(crate) fn add_manual_node(node: ManualNode) -> Result<(), String> {
-    if node.id.trim().is_empty() || node.path.trim().is_empty() {
+pub(crate) fn add_manual_node(mut node: ManualNode) -> Result<(), String> {
+    node.id = node.id.trim().to_string();
+    node.path = node.path.trim().to_string();
+    if node.id.is_empty() || node.path.is_empty() {
         return Err("manual node requires id and path".to_string());
     }
     mutate_settings(|settings| {
@@ -935,6 +942,39 @@ mod tests {
         let nodes = super::manual_nodes();
         assert_eq!(nodes.len(), 1);
         assert_eq!(nodes[0].id, "my-converter");
+        // persisted: a fresh load sees the nested node (id + ports) again
+        super::reset_settings_state_for_tests();
+        assert_eq!(super::manual_nodes().len(), 1);
+    }
+
+    #[test]
+    fn add_project_dir_rejects_missing_or_non_dir() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let guard = SettingsEnvGuard::with_clean_dir("dora-settings-m18-proj-err");
+        super::reset_settings_state_for_tests();
+        assert!(super::add_project_dir("/definitely/not/a/real/dir").is_err());
+        let file = guard.dir.join("plain-file");
+        std::fs::write(&file, b"x").unwrap();
+        assert!(super::add_project_dir(file.to_string_lossy().as_ref()).is_err());
+    }
+
+    #[test]
+    fn add_manual_node_rejects_empty_id_or_path() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let guard = SettingsEnvGuard::with_clean_dir("dora-settings-m18-manual-err");
+        super::reset_settings_state_for_tests();
+        let empty_id = super::ManualNode {
+            id: "  ".into(),
+            path: "/tmp/a.py".into(),
+            ..Default::default()
+        };
+        assert!(super::add_manual_node(empty_id).is_err());
+        let empty_path = super::ManualNode {
+            id: "node".into(),
+            path: "".into(),
+            ..Default::default()
+        };
+        assert!(super::add_manual_node(empty_path).is_err());
     }
 
     fn version_script(version: &str) -> PathBuf {
