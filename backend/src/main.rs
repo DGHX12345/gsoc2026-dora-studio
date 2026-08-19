@@ -16,6 +16,7 @@ mod otel;
 mod otlp;
 mod otlp_grpc;
 mod profile;
+mod project_scan;
 mod protocol;
 mod recording;
 mod runtime;
