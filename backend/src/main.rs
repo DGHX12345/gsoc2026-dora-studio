@@ -22,6 +22,7 @@ mod recording;
 mod runtime;
 mod schema_registry;
 mod session;
+mod urn_catalog;
 
 use std::{path::PathBuf, sync::Arc};
 
