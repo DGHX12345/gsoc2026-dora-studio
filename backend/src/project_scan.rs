@@ -195,15 +195,19 @@ pub(crate) fn palette_for_dirs(dirs: &[PathBuf]) -> Vec<PaletteEntry> {
                         // per-port URNs are never overwritten (first scan wins on conflict).
                         if !node.input_types.is_empty() {
                             for port in &mut entry.inputs {
-                                if let Some(urn) = node.input_types.get(&port.name) {
-                                    port.urn = Some(urn.clone());
+                                if port.urn.is_none() {
+                                    if let Some(urn) = node.input_types.get(&port.name) {
+                                        port.urn = Some(urn.clone());
+                                    }
                                 }
                             }
                         }
                         if !node.output_types.is_empty() {
                             for port in &mut entry.outputs {
-                                if let Some(urn) = node.output_types.get(&port.name) {
-                                    port.urn = Some(urn.clone());
+                                if port.urn.is_none() {
+                                    if let Some(urn) = node.output_types.get(&port.name) {
+                                        port.urn = Some(urn.clone());
+                                    }
                                 }
                             }
                         }
@@ -355,6 +359,28 @@ mod tests {
         assert_eq!(
             entries[0].outputs[1].urn.as_deref(),
             Some("std/core/v1/String")
+        );
+        fs::remove_dir_all(&a).ok();
+        fs::remove_dir_all(&b).ok();
+    }
+
+    #[test]
+    fn palette_merge_first_scan_wins_on_conflicting_urns() {
+        // project a types x as UInt8; project b types x as Image.
+        // The first scan's URN must survive.
+        let a = tmp_project(
+            "a-first",
+            "nodes:\n  - id: node\n    path: node.py\n    outputs:\n      - x\n    output_types:\n      x: std/core/v1/UInt8\n",
+        );
+        let b = tmp_project(
+            "b-second",
+            "nodes:\n  - id: node\n    path: node.py\n    outputs:\n      - x\n    output_types:\n      x: std/media/v1/Image\n",
+        );
+        let entries = palette_for_dirs(&[a.clone(), b.clone()]);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(
+            entries[0].outputs[0].urn.as_deref(),
+            Some("std/core/v1/UInt8")
         );
         fs::remove_dir_all(&a).ok();
         fs::remove_dir_all(&b).ok();
