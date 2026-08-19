@@ -35,7 +35,16 @@
           <option v-for="flow in dataflows" :key="flow.id" :value="flow.id">
             {{ flow.name }}
           </option>
+          <option value="__custom__">Custom YAML path…</option>
         </select>
+        <input
+          v-if="useCustomPath"
+          v-model="customPath"
+          class="custom-path-input"
+          type="text"
+          placeholder="examples/my-flow/dataflow.yml"
+          @input="apiError = ''"
+        />
       </label>
       <p v-if="apiError" class="muted">{{ apiError }}</p>
       <div class="control-row">
@@ -161,6 +170,7 @@ import {
   restartDataflowRuntime,
   startDataflowRuntime,
   startRecordingCapture,
+  startRuntimeByPath,
   startSession,
   stopDataflowRuntime,
   stopRecordingCapture,
@@ -202,6 +212,8 @@ const nodes = ref<NodeMetricsResponse[]>([])
 const runtime = ref<RuntimeStateResponse>(emptyRuntime)
 const dataflows = ref<DataflowSummaryResponse[]>([])
 const selectedDataflowId = ref('')
+const customPath = ref('')
+const useCustomPath = computed(() => selectedDataflowId.value === '__custom__')
 const apiError = ref('')
 const apiSource = ref<ApiSource>('fallback')
 const session = ref<SessionStatusResponse>(emptySession)
@@ -231,7 +243,11 @@ const statusText: Record<string, string> = {
 const sessionUi = computed(() => sessionUiState(session.value, sessionBusy.value))
 const canStart = computed(() => canStartSession(session.value, sessionBusy.value))
 const canStop = computed(() => canStopSession(session.value, sessionBusy.value))
-const canStartFlow = computed(() => canStartDataflow(runtime.value.status, session.value))
+const canStartFlow = computed(() => {
+  if (!canStartDataflow(runtime.value.status, session.value)) return false
+  if (useCustomPath.value) return customPath.value.trim().length > 0
+  return true
+})
 const canStopFlow = computed(() => canStopDataflow(runtime.value.status, session.value))
 
 const sessionPillClass = computed(() => {
@@ -265,7 +281,9 @@ const upgradeHint = computed(() =>
 const recordingBtnState = computed(() =>
   recordingAction(
     recording.value.status,
-    session.value.lifecycleSupported && session.value.running && !!selectedDataflow.value,
+    session.value.lifecycleSupported &&
+      session.value.running &&
+      (useCustomPath.value ? customPath.value.trim().length > 0 : !!selectedDataflow.value),
   ),
 )
 const recordingBtnClass = computed(() => {
@@ -325,7 +343,11 @@ async function stopSessionHandler() {
 
 async function startDataflow() {
   try {
-    runtime.value = await startDataflowRuntime(selectedDataflowId.value)
+    if (useCustomPath.value) {
+      runtime.value = await startRuntimeByPath(customPath.value.trim())
+    } else {
+      runtime.value = await startDataflowRuntime(selectedDataflowId.value)
+    }
   } catch {
     apiError.value = 'Failed to start dataflow. Is the backend running?'
   }
@@ -351,18 +373,22 @@ async function restartDataflow() {
 }
 
 async function startRecordingHandler() {
-  if (!selectedDataflow.value) return
   try {
-    const definition = await getDataflowDefinition(selectedDataflow.value.id, {
-      id: selectedDataflow.value.id,
-      name: selectedDataflow.value.name,
-      relativePath: '',
-      source: '',
-      nodeCount: 0,
-      edgeCount: 0,
-      nodes: [],
-    })
-    recording.value = await startRecordingCapture(definition.data.relativePath)
+    if (useCustomPath.value) {
+      recording.value = await startRecordingCapture(customPath.value.trim())
+    } else {
+      if (!selectedDataflow.value) return
+      const definition = await getDataflowDefinition(selectedDataflow.value.id, {
+        id: selectedDataflow.value.id,
+        name: selectedDataflow.value.name,
+        relativePath: '',
+        source: '',
+        nodeCount: 0,
+        edgeCount: 0,
+        nodes: [],
+      })
+      recording.value = await startRecordingCapture(definition.data.relativePath)
+    }
     if (recording.value.status === 'failed' || recording.value.status === 'unavailable') {
       apiError.value = recording.value.message
     }
@@ -382,7 +408,7 @@ async function stopRecordingHandler() {
 }
 
 async function refreshSelectedNodes() {
-  if (!selectedDataflowId.value) return
+  if (!selectedDataflowId.value || useCustomPath.value) return
   const result = await getNodes(selectedDataflowId.value, emptyNodes)
   nodes.value = result.data
   apiSource.value = result.source
@@ -476,6 +502,28 @@ onUnmounted(() => {
 .session-upgrade-hint-inline {
   color: var(--accent-red, #ef4444);
   font-size: 13px;
+}
+
+.custom-path-input {
+  background: var(--bg-surface, #f8fafc);
+  border: 1px solid var(--hairline, #e2e8f0);
+  border-radius: 8px;
+  color: var(--text-body, #1e293b);
+  font-size: 13px;
+  min-width: 240px;
+  padding: 8px 12px;
+}
+
+[data-theme="dark"] .custom-path-input {
+  background: var(--bg-surface, #0f172a);
+  color: var(--text-body, #e2e8f0);
+}
+
+.metric-card strong {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .empty-state {

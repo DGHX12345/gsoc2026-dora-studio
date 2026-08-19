@@ -6,7 +6,7 @@ use serde::Deserialize;
 
 #[cfg(test)]
 mod tests {
-    use super::{running_dataflow_count, DoraListEntry};
+    use super::{parse_list_output, running_dataflow_count, DoraListEntry};
 
     /// Real `dora 1.0` `dora list --format json` line (captured 2026-08-17).
     const DORA10_RUNNING_LINE: &str = r#"{"uuid":"01a00e7c-0349-79e6-9253-d0bff3dfb24b","name":"m155-smoke","status":"Running","nodes":5,"cpu":2.9987505674362183,"memory":33.906664}"#;
@@ -63,6 +63,22 @@ mod tests {
         assert_eq!(crate::dora_env::normalize_dora_version(""), "unknown");
         assert_eq!(crate::dora_env::normalize_dora_version("\n"), "unknown");
     }
+
+    /// dora 1.0 prints a single object instead of an array when
+    /// exactly one dataflow is registered.
+    #[test]
+    fn parses_single_object_list_output() {
+        let single = r#"{"uuid":"df-1","name":"flow","status":"Running","nodes":2}"#;
+        let entries = parse_list_output(single).expect("single object parses");
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].name, "flow");
+
+        let array = format!("[{single}, {single}]");
+        let entries = parse_list_output(&array).expect("array parses");
+        assert_eq!(entries.len(), 2);
+
+        assert!(parse_list_output("not-json").is_none());
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -91,6 +107,17 @@ fn running_dataflow_count(entries: &[DoraListEntry]) -> u32 {
         .count() as u32
 }
 
+/// dora 1.0 prints a single object instead of an array when exactly
+/// one dataflow is registered.
+fn parse_list_output(stdout: &str) -> Option<Vec<DoraListEntry>> {
+    if let Ok(entries) = serde_json::from_str::<Vec<DoraListEntry>>(stdout) {
+        return Some(entries);
+    }
+    serde_json::from_str::<DoraListEntry>(stdout)
+        .ok()
+        .map(|entry| vec![entry])
+}
+
 /// Returns the installed dora CLI version, fetched once and cached.
 pub async fn dora_version() -> String {
     dora_env::dora_version().await
@@ -106,8 +133,8 @@ pub async fn query_coordinator() -> CoordinatorStatus {
     match output {
         Ok(out) if out.status.success() => {
             let stdout = String::from_utf8_lossy(&out.stdout);
-            match serde_json::from_str::<Vec<DoraListEntry>>(&stdout) {
-                Ok(entries) => {
+            match parse_list_output(&stdout) {
+                Some(entries) => {
                     let running = running_dataflow_count(&entries);
                     let active_nodes: u32 = entries.iter().map(|e| e.nodes).sum();
                     let dataflows = entries
@@ -128,7 +155,7 @@ pub async fn query_coordinator() -> CoordinatorStatus {
                         dataflows,
                     }
                 }
-                Err(_) => CoordinatorStatus {
+                None => CoordinatorStatus {
                     connected: true,
                     version,
                     running_dataflows: 0,

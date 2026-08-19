@@ -70,6 +70,18 @@ struct SessionListEntry {
     status: String,
 }
 
+/// dora 1.0 serializes `dora list --format json` as an array, except
+/// when exactly one dataflow is registered — then it prints a single
+/// object. Accept both.
+fn parse_list_entries(stdout: &str) -> Option<Vec<SessionListEntry>> {
+    if let Ok(entries) = serde_json::from_str::<Vec<SessionListEntry>>(stdout) {
+        return Some(entries);
+    }
+    serde_json::from_str::<SessionListEntry>(stdout)
+        .ok()
+        .map(|entry| vec![entry])
+}
+
 impl DoraSessionManager {
     pub fn new() -> SessionHandle {
         Arc::new(Self {
@@ -245,14 +257,14 @@ impl DoraSessionManager {
                 if stdout.trim().is_empty() {
                     return CoordinatorProbe::Connected { dataflow_count: 0 };
                 }
-                match serde_json::from_str::<Vec<SessionListEntry>>(&stdout) {
-                    Ok(entries) => CoordinatorProbe::Connected {
+                match parse_list_entries(&stdout) {
+                    Some(entries) => CoordinatorProbe::Connected {
                         dataflow_count: entries
                             .iter()
                             .filter(|entry| entry.status.eq_ignore_ascii_case("running"))
                             .count() as u32,
                     },
-                    Err(_) => CoordinatorProbe::Unknown,
+                    None => CoordinatorProbe::Unknown,
                 }
             }
             Ok(_) | Err(_) => CoordinatorProbe::Unavailable,
@@ -414,6 +426,25 @@ mod tests {
         assert_eq!(status.dataflow_count, 0);
     }
 
+    /// dora 1.0 prints a single JSON object (not an array) for
+    /// `dora list --format json` when exactly one dataflow is
+    /// registered — that must count as connected, not unknown.
+    #[tokio::test(flavor = "current_thread")]
+    async fn single_object_list_output_counts_as_connected() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let fake = FakeDora::new("1.0.0")
+            .with_session_running(true)
+            .with_single_list_output();
+        let _env = DoraBinEnvGuard::set(fake.path());
+
+        let status = DoraSessionManager::new().status().await;
+
+        assert_eq!(status.status, "running");
+        assert!(status.coordinator_connected);
+        assert_eq!(status.coordinator_status, "connected");
+        assert_eq!(status.dataflow_count, 1);
+    }
+
     #[tokio::test(flavor = "current_thread")]
     async fn externally_started_session_is_visible_without_studio_child() {
         let _lock = ENV_LOCK.lock().unwrap();
@@ -523,6 +554,15 @@ mod tests {
             replacement
         }
 
+        fn with_single_list_output(self) -> Self {
+            let replacement = Self::write("1.0.0", "single", None);
+            if self.state_path.exists() {
+                fs::write(&replacement.state_path, b"running").unwrap();
+            }
+            drop(self);
+            replacement
+        }
+
         fn with_lifecycle_failure(self, command: &str, code: i32) -> Self {
             let replacement = Self::write("1.0.0", "valid", Some((command, code)));
             if self.state_path.exists() {
@@ -560,6 +600,10 @@ mod tests {
             let list_body = match list_mode {
                 "invalid" => "printf 'not-json\\n'; exit 0".to_string(),
                 "empty" => "exit 0".to_string(),
+                "single" => format!(
+                    "if [ -f '{state}' ]; then printf '{{\"uuid\":\"df-1\",\"name\":\"external-flow\",\"status\":\"Running\",\"nodes\":2}}\\n'; exit 0; fi\nprintf 'coordinator unavailable\\n' >&2\nexit 1",
+                    state = state_path.display()
+                ),
                 _ => format!(
                     "if [ -f '{state}' ]; then printf '[{{\"uuid\":\"df-1\",\"name\":\"external-flow\",\"status\":\"Running\",\"nodes\":2}}]\\n'; exit 0; fi\nprintf 'coordinator unavailable\\n' >&2\nexit 1",
                     state = state_path.display()

@@ -542,6 +542,17 @@ fn slug(value: &str) -> String {
 }
 
 fn workspace_root() -> Result<PathBuf, DataflowError> {
+    // The compiled backend owns the repository layout, so prefer the
+    // manifest root over the launch-time cwd (which may point at a
+    // different checkout and hide dataflows).
+    let manifest_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .map(Path::to_path_buf)
+        .filter(|root| root.join("examples").is_dir() && root.join("backend").is_dir());
+    if let Some(root) = manifest_root {
+        return Ok(root);
+    }
+
     let mut current = std::env::current_dir()
         .map_err(|error| DataflowError::Io(format!("Failed to read current directory: {error}")))?;
 

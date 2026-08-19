@@ -151,6 +151,12 @@ export function startRuntime() {
   return fetchJson<RuntimeStateResponse>('/runtime/start', { method: 'POST' })
 }
 
+export function startRuntimeByPath(path: string) {
+  return fetchJson<RuntimeStateResponse>('/runtime/start-path', {
+    method: 'POST', headers: JSON_HEADER, body: JSON.stringify({ path }),
+  })
+}
+
 export function stopRuntime() {
   return fetchJson<RuntimeStateResponse>('/runtime/stop', { method: 'POST' })
 }

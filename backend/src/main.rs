@@ -108,6 +108,7 @@ async fn main() {
         .route("/api/runtime/status", get(runtime_status))
         .route("/api/runtime/logs", get(runtime_logs))
         .route("/api/runtime/start", post(runtime_start))
+        .route("/api/runtime/start-path", post(runtime_start_path))
         .route("/api/runtime/stop", post(runtime_stop))
         .route("/api/runtime/nodes/:dataflow_id", get(runtime_nodes))
         .route(
@@ -461,6 +462,49 @@ async fn daemon_stop(State(state): State<Arc<AppState>>) -> Json<session::Legacy
 
 async fn runtime_start(State(state): State<Arc<AppState>>) -> Json<models::RuntimeState> {
     Json(state.runtime.start().await)
+}
+
+#[derive(serde::Deserialize)]
+struct RuntimeStartPathRequest {
+    path: String,
+}
+
+/// Start a dataflow by arbitrary YAML path (not necessarily one of the
+/// discovered example dataflows).
+async fn runtime_start_path(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<RuntimeStartPathRequest>,
+) -> Result<Json<models::RuntimeState>, ApiError> {
+    let path = req.path.trim();
+    if path.is_empty() {
+        return Err(ApiError {
+            status: StatusCode::BAD_REQUEST,
+            message: "missing 'path' field".to_string(),
+        });
+    }
+    let source = std::path::Path::new(path);
+    let stem = source
+        .file_stem()
+        .map(|stem| stem.to_string_lossy().to_string())
+        .unwrap_or_else(|| "custom-dataflow".to_string());
+    let parent = source
+        .parent()
+        .and_then(|parent| parent.file_name())
+        .map(|name| name.to_string_lossy().to_string())
+        .unwrap_or_default();
+    // Parent dir + file stem keeps names unique across folders full of
+    // dataflow.yml files.
+    let id = if parent.is_empty() {
+        stem
+    } else {
+        format!("{parent}-{stem}")
+    };
+    Ok(Json(
+        state
+            .runtime
+            .start_dataflow(id, PathBuf::from(path), path.to_string())
+            .await,
+    ))
 }
 
 async fn runtime_stop(State(state): State<Arc<AppState>>) -> Json<models::RuntimeState> {

@@ -65,6 +65,14 @@
             {{ runtimeActive ? `PID ${runtimePid} · capturing logs` : coordinatorConnected ? `Coordinator active · ${runningFlows} dataflow(s)` : 'Start dora daemon or run a dataflow' }}
           </p>
         </div>
+        <button
+          v-if="sessionRunning"
+          class="footer-stop"
+          :disabled="sessionBusy"
+          @click="stopSessionHandler"
+        >
+          {{ t.session.stop }}
+        </button>
       </div>
     </aside>
 
@@ -108,7 +116,15 @@ import LogsEventsView from './components/LogsEventsView.vue'
 import MetricsDashboard from './components/MetricsDashboard.vue'
 import ReplayTimeline from './components/ReplayTimeline.vue'
 import VisualizationView from './components/VisualizationView.vue'
-import { getCoordinatorStatus, getRuntimeStatus, type CoordinatorStatusResponse, type RuntimeStateResponse } from './api'
+import {
+  getCoordinatorStatus,
+  getRuntimeStatus,
+  getSessionStatus,
+  stopSession,
+  type CoordinatorStatusResponse,
+  type RuntimeStateResponse,
+  type SessionStatusResponse,
+} from './api'
 import { useI18n } from './i18n'
 import type { ViewId } from './types'
 
@@ -126,6 +142,8 @@ const coordinatorConnected = ref(false)
 const runningFlows = ref(0)
 const runtimeActive = ref(false)
 const runtimePid = ref<number | null>(null)
+const sessionRunning = ref(false)
+const sessionBusy = ref(false)
 let coordinatorTimer: number | undefined
 
 async function pollStatus() {
@@ -148,6 +166,31 @@ async function pollStatus() {
   } catch {
     runtimeActive.value = false
   }
+
+  try {
+    const sessionResult = await getSessionStatus({
+      status: 'stopped', running: false, coordinatorConnected: false, coordinatorStatus: 'unavailable',
+      pid: null, version: '', lifecycleSupported: true, dataflowCount: 0, message: '',
+    })
+    if (!sessionBusy.value) {
+      sessionRunning.value = sessionResult.data.running
+    }
+  } catch {
+    if (!sessionBusy.value) {
+      sessionRunning.value = false
+    }
+  }
+}
+
+async function stopSessionHandler() {
+  sessionBusy.value = true
+  try {
+    const result = await stopSession()
+    sessionRunning.value = result.running
+  } catch {
+    sessionRunning.value = false
+  }
+  sessionBusy.value = false
 }
 
 function downloadDemoReport() {
@@ -229,3 +272,21 @@ function openReplayInVisualization(path: string) {
   visualizationRef.value?.openReplayFromRecording?.(path)
 }
 </script>
+
+<style scoped>
+.footer-stop {
+  background: var(--accent-red, #ef4444);
+  border: none;
+  border-radius: 8px;
+  color: #ffffff;
+  cursor: pointer;
+  flex-shrink: 0;
+  font-size: 12px;
+  padding: 6px 12px;
+}
+
+.footer-stop:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+</style>
