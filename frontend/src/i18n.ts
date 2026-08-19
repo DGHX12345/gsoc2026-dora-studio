@@ -213,6 +213,8 @@ type Messages = {
     addPlaceholder: string
     delete: string
     active: string
+    expandHint: string
+    collapseHint: string
   }
 }
 
@@ -431,6 +433,8 @@ const messages: Record<Locale, Messages> = {
       addPlaceholder: '/path/to/dora',
       delete: '删除',
       active: '当前',
+      expandHint: '点击展开',
+      collapseHint: '点击收起',
     },
   },
   en: {
@@ -647,6 +651,8 @@ const messages: Record<Locale, Messages> = {
       addPlaceholder: '/path/to/dora',
       delete: 'Delete',
       active: 'active',
+      expandHint: 'Click to expand',
+      collapseHint: 'Click to collapse',
     },
   },
 }

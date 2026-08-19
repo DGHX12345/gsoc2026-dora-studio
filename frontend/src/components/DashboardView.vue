@@ -50,7 +50,12 @@
           <h2>{{ t.doraEnv.title }}</h2>
           <span :class="['pill', envBadgeClass]">{{ envBadgeText }}</span>
         </span>
-        <span class="muted env-active-version">{{ activeVersionText }}</span>
+        <span class="env-summary-tail">
+          <span class="muted env-active-version">{{ activeVersionText }}</span>
+          <span class="env-expand-hint env-hint-closed">{{ t.doraEnv.expandHint }}</span>
+          <span class="env-expand-hint env-hint-open">{{ t.doraEnv.collapseHint }}</span>
+          <span class="env-chevron">&#9656;</span>
+        </span>
       </summary>
       <p v-if="overriddenByEnv" class="env-override-hint">{{ t.doraEnv.envOverride }}</p>
       <p v-else-if="envBadge === 'degraded'" class="env-degraded-hint">{{ t.doraEnv.degradedHint }}</p>
@@ -503,8 +508,45 @@ onUnmounted(() => {
   font-size: 16px;
 }
 
+.env-summary-tail {
+  align-items: center;
+  display: flex;
+  gap: 10px;
+}
+
 .env-active-version {
   font-size: 13px;
+}
+
+.env-expand-hint {
+  color: var(--text-muted, #94a3b8);
+  font-size: 12px;
+}
+
+[data-theme="dark"] .env-expand-hint {
+  color: var(--text-muted-dark, #64748b);
+}
+
+.env-hint-open {
+  display: none;
+}
+
+.env-panel[open] .env-hint-closed {
+  display: none;
+}
+
+.env-panel[open] .env-hint-open {
+  display: inline;
+}
+
+.env-chevron {
+  color: var(--text-muted, #94a3b8);
+  font-size: 12px;
+  transition: transform 0.15s ease;
+}
+
+.env-panel[open] .env-chevron {
+  transform: rotate(90deg);
 }
 
 .env-override-hint {
