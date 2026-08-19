@@ -1,5 +1,25 @@
 <template>
   <section class="view-stack">
+    <!-- Session status bar -->
+    <article class="panel session-bar">
+      <div class="session-bar-left">
+        <span :class="['pill', sessionPillClass]">{{ sessionPillText }}</span>
+        <span class="muted session-bar-meta">
+          {{ t.session.versionLabel }}: {{ session.version || '—' }}
+          <template v-if="session.running"> · {{ session.dataflowCount }} {{ t.session.dataflowCountLabel }}</template>
+        </span>
+      </div>
+      <div class="session-bar-right">
+        <p v-if="!session.lifecycleSupported" class="session-upgrade-hint-inline">{{ upgradeHint }}</p>
+        <button
+          :disabled="!canStart && !canStop"
+          @click="session.running ? stopSessionHandler() : startSessionHandler()"
+        >
+          {{ sessionButtonLabel }}
+        </button>
+      </div>
+    </article>
+
     <div class="panel run-panel large-action-panel">
       <div>
         <p class="eyebrow">Run &amp; Monitor</p>
@@ -20,9 +40,16 @@
       <p v-if="apiError" class="muted">{{ apiError }}</p>
       <div class="control-row">
         <button class="secondary" @click="refreshRuntime">Refresh</button>
-        <button @click="startDataflow" :disabled="runtime.status === 'running'">Start</button>
-        <button class="secondary" @click="restartDataflow">Restart</button>
-        <button class="danger-button" @click="stopDataflow" :disabled="runtime.status !== 'running'">Stop</button>
+        <button @click="startDataflow" :disabled="!canStartFlow">Start</button>
+        <button class="secondary" @click="restartDataflow" :disabled="!canStartFlow">Restart</button>
+        <button class="danger-button" @click="stopDataflow" :disabled="!canStopFlow">Stop</button>
+        <button
+          :class="recordingBtnClass"
+          :disabled="recordingBtnState === 'disabled'"
+          @click="recordingBtnState === 'recording' ? stopRecordingHandler() : startRecordingHandler()"
+        >
+          {{ recordingBtnState === 'recording' ? t.recording.stopRecording : t.recording.record }}
+        </button>
       </div>
     </div>
 
@@ -82,6 +109,40 @@
       </div>
     </article>
 
+    <article class="panel">
+      <div class="panel-header">
+        <h2>{{ t.recording.listTitle }}</h2>
+        <button class="secondary" @click="refreshRecordings">Refresh</button>
+      </div>
+      <div v-if="recordings.length === 0" class="empty-state">{{ t.recording.empty }}</div>
+      <div v-else class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Frames</th>
+              <th>Size</th>
+              <th>Time</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="rec in recordings" :key="rec.path">
+              <td><strong>{{ rec.name }}</strong></td>
+              <td>{{ rec.frameCount ?? '—' }}</td>
+              <td>{{ formatBytes(rec.sizeBytes) }}</td>
+              <td>{{ formatRecordingTime(rec.createdAtMillis) }}</td>
+              <td>
+                <button class="secondary" @click="$emit('openReplay', rec.path)">
+                  {{ t.recording.openInReplay }}
+                </button>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </article>
+
     <p v-if="runtime.status === 'running'" class="muted" style="text-align: center; padding: 10px 0;">
       Dataflow is running. Switch to <strong>Logs &amp; Events</strong> to view live output.
     </p>
@@ -89,23 +150,53 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import {
+  getDataflowDefinition,
   getDataflows,
   getNodes,
+  getRecordingList,
   getRuntimeStatus,
+  getSessionStatus,
   restartDataflowRuntime,
   startDataflowRuntime,
+  startRecordingCapture,
+  startSession,
   stopDataflowRuntime,
+  stopRecordingCapture,
+  stopSession,
   type ApiSource,
   type DataflowSummaryResponse,
   type NodeMetricsResponse,
+  type RecordingCaptureStatusResponse,
+  type RecordingListEntryResponse,
   type RuntimeStateResponse,
+  type SessionStatusResponse,
 } from '../api'
+import { useI18n } from '../i18n'
+import {
+  canStartDataflow,
+  canStartSession,
+  canStopDataflow,
+  canStopSession,
+  formatBytes,
+  formatRecordingTime,
+  recordingAction,
+  sessionUiState,
+  type SessionBusy,
+} from '../session-ui'
+
+defineEmits<{ openReplay: [path: string] }>()
+
+const { t } = useI18n()
 
 const emptyNodes: NodeMetricsResponse[] = []
 const emptyRuntime: RuntimeStateResponse = { status: 'stopped', pid: null, lastMessage: '', dataflowId: null, dataflowPath: null }
 const emptyDataflows: DataflowSummaryResponse[] = []
+const emptySession: SessionStatusResponse = {
+  status: 'stopped', running: false, coordinatorConnected: false, coordinatorStatus: 'unavailable',
+  pid: null, version: '', lifecycleSupported: true, dataflowCount: 0, message: '',
+}
 
 const nodes = ref<NodeMetricsResponse[]>([])
 const runtime = ref<RuntimeStateResponse>(emptyRuntime)
@@ -113,6 +204,12 @@ const dataflows = ref<DataflowSummaryResponse[]>([])
 const selectedDataflowId = ref('')
 const apiError = ref('')
 const apiSource = ref<ApiSource>('fallback')
+const session = ref<SessionStatusResponse>(emptySession)
+const sessionBusy = ref<SessionBusy>('idle')
+const recording = ref<RecordingCaptureStatusResponse>({
+  status: 'idle', outputPath: null, dataflowPath: null, startedAtMillis: null, frameCount: null, message: '',
+})
+const recordings = ref<RecordingListEntryResponse[]>([])
 const apiSourceText = computed(() => (apiSource.value === 'connected' ? 'Connected' : 'Backend unavailable'))
 const selectedDataflow = computed(
   () => dataflows.value.find((flow) => flow.id === selectedDataflowId.value) ?? dataflows.value[0],
@@ -120,6 +217,7 @@ const selectedDataflow = computed(
 const runtimeStatusText = computed(() => {
   if (runtime.value.status === 'running') return 'Running'
   if (runtime.value.status === 'failed') return 'Failed'
+  if (runtime.value.status === 'unavailable') return 'Unavailable'
   return 'Stopped'
 })
 
@@ -130,11 +228,99 @@ const statusText: Record<string, string> = {
   stopped: 'Stopped',
 }
 
+const sessionUi = computed(() => sessionUiState(session.value, sessionBusy.value))
+const canStart = computed(() => canStartSession(session.value, sessionBusy.value))
+const canStop = computed(() => canStopSession(session.value, sessionBusy.value))
+const canStartFlow = computed(() => canStartDataflow(runtime.value.status, session.value))
+const canStopFlow = computed(() => canStopDataflow(runtime.value.status, session.value))
+
+const sessionPillClass = computed(() => {
+  if (sessionUi.value === 'running') return 'success'
+  if (sessionUi.value === 'error') return 'failed'
+  if (sessionUi.value === 'unavailable' || sessionUi.value === 'starting' || sessionUi.value === 'stopping') return 'warning'
+  return 'stopped'
+})
+
+const sessionPillText = computed(() => {
+  switch (sessionUi.value) {
+    case 'running': return t.value.session.running
+    case 'starting': return t.value.session.starting
+    case 'stopping': return t.value.session.stopping
+    case 'error': return t.value.session.error
+    case 'unavailable': return t.value.session.unavailable
+    default: return t.value.session.stopped
+  }
+})
+
+const sessionButtonLabel = computed(() => {
+  if (sessionBusy.value === 'starting') return t.value.session.starting
+  if (sessionBusy.value === 'stopping') return t.value.session.stopping
+  return session.value.running ? t.value.session.stop : t.value.session.start
+})
+
+const upgradeHint = computed(() =>
+  t.value.session.upgradeHint.replace('{version}', session.value.version || 'unknown'),
+)
+
+const recordingBtnState = computed(() =>
+  recordingAction(
+    recording.value.status,
+    session.value.lifecycleSupported && session.value.running && !!selectedDataflow.value,
+  ),
+)
+const recordingBtnClass = computed(() => {
+  if (recordingBtnState.value === 'recording') return 'danger-button'
+  if (recordingBtnState.value === 'disabled') return 'secondary'
+  return ''
+})
+
+let refreshTimer: number | undefined
+
+async function refreshSessionAndRecordings() {
+  const [sessionResult, recordingsResult] = await Promise.all([
+    getSessionStatus(emptySession),
+    getRecordingList([]),
+  ])
+  session.value = sessionResult.data
+  if (recordingsResult.source === 'connected') {
+    recordings.value = recordingsResult.data
+  }
+}
+
+async function refreshRecordings() {
+  const result = await getRecordingList([])
+  if (result.source === 'connected') {
+    recordings.value = result.data
+  }
+}
+
 async function refreshRuntime() {
   const result = await getRuntimeStatus(emptyRuntime)
   runtime.value = result.data
   apiSource.value = result.source
   await refreshSelectedNodes()
+}
+
+async function startSessionHandler() {
+  sessionBusy.value = 'starting'
+  try {
+    session.value = await startSession()
+  } catch {
+    // next poll reports the honest state
+  }
+  sessionBusy.value = 'idle'
+  await refreshSessionAndRecordings()
+}
+
+async function stopSessionHandler() {
+  sessionBusy.value = 'stopping'
+  try {
+    session.value = await stopSession()
+  } catch {
+    // next poll reports the honest state
+  }
+  sessionBusy.value = 'idle'
+  await refreshSessionAndRecordings()
 }
 
 async function startDataflow() {
@@ -164,6 +350,37 @@ async function restartDataflow() {
   await refreshSelectedNodes()
 }
 
+async function startRecordingHandler() {
+  if (!selectedDataflow.value) return
+  try {
+    const definition = await getDataflowDefinition(selectedDataflow.value.id, {
+      id: selectedDataflow.value.id,
+      name: selectedDataflow.value.name,
+      relativePath: '',
+      source: '',
+      nodeCount: 0,
+      edgeCount: 0,
+      nodes: [],
+    })
+    recording.value = await startRecordingCapture(definition.data.relativePath)
+    if (recording.value.status === 'failed' || recording.value.status === 'unavailable') {
+      apiError.value = recording.value.message
+    }
+  } catch {
+    apiError.value = 'Failed to start recording. Is the backend running?'
+  }
+  await refreshRecordings()
+}
+
+async function stopRecordingHandler() {
+  try {
+    recording.value = await stopRecordingCapture()
+  } catch {
+    apiError.value = 'Failed to stop recording. Is the backend running?'
+  }
+  await refreshRecordings()
+}
+
 async function refreshSelectedNodes() {
   if (!selectedDataflowId.value) return
   const result = await getNodes(selectedDataflowId.value, emptyNodes)
@@ -187,6 +404,13 @@ onMounted(async () => {
     selectedDataflowId.value = dataflows.value[0].id
     await refreshSelectedNodes()
   }
+
+  await refreshSessionAndRecordings()
+  refreshTimer = window.setInterval(refreshSessionAndRecordings, 5000)
+})
+
+onUnmounted(() => {
+  if (refreshTimer) window.clearInterval(refreshTimer)
 })
 </script>
 
@@ -227,5 +451,41 @@ onMounted(async () => {
 
 .metric-grid {
   min-width: 0;
+}
+
+.session-bar {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  justify-content: space-between;
+}
+
+.session-bar-left,
+.session-bar-right {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+}
+
+.session-bar-meta {
+  font-size: 13px;
+}
+
+.session-upgrade-hint-inline {
+  color: var(--accent-red, #ef4444);
+  font-size: 13px;
+}
+
+.empty-state {
+  color: var(--text-muted, #94a3b8);
+  font-size: 14px;
+  padding: 22px 0;
+  text-align: center;
+}
+
+[data-theme="dark"] .empty-state {
+  color: var(--text-muted-dark, #64748b);
 }
 </style>

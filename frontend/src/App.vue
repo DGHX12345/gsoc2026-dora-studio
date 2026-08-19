@@ -85,14 +85,14 @@
 
       <DashboardView v-if="activeView === 'dashboard'" @navigate="(v: ViewId) => activeView = v" />
       <DataflowExplorer v-else-if="activeView === 'explorer'" />
-      <RunMonitorView v-else-if="activeView === 'monitor'" />
+      <RunMonitorView v-else-if="activeView === 'monitor'" @open-replay="openReplayInVisualization" />
       <LogsEventsView v-else-if="activeView === 'logs'" />
       <ReplayTimeline v-else-if="activeView === 'replay'" />
       <MetricsDashboard v-else-if="activeView === 'metrics'" />
       <!-- M15 B6: the viewport stays mounted across page switches
            (v-show, not v-if) so the live feed and tool attachments
            survive; hidden pages render nothing (on-demand rendering). -->
-      <VisualizationView v-show="activeView === 'visualization'" />
+      <VisualizationView ref="visualizationRef" v-show="activeView === 'visualization'" />
       <MotionPlannerView v-show="activeView === 'motion'" />
     </main>
   </div>
@@ -220,4 +220,12 @@ const robotItems = computed(() => navItems.value.filter((item) => item.group ===
 
 const activeView = ref<ViewId>('dashboard')
 const currentItem = computed(() => navItems.value.find((item) => item.id === activeView.value) ?? navItems.value[0])
+
+type VisualizationExposed = { openReplayFromRecording?: (path: string) => void }
+const visualizationRef = ref<VisualizationExposed | null>(null)
+
+function openReplayInVisualization(path: string) {
+  activeView.value = 'visualization'
+  visualizationRef.value?.openReplayFromRecording?.(path)
+}
 </script>

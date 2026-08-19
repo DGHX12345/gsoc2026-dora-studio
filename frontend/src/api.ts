@@ -64,7 +64,7 @@ export type DataflowGraphResponse = {
   diagnostics: DiagnosticResponse[]
 }
 
-export type RuntimeStatus = 'running' | 'stopped' | 'failed'
+export type RuntimeStatus = 'running' | 'stopped' | 'failed' | 'unavailable'
 
 export type RuntimeStateResponse = {
   status: RuntimeStatus
@@ -403,6 +403,65 @@ export function startDaemon() {
 
 export function stopDaemon() {
   return fetchJson<DaemonStatusResponse>('/daemon/stop', { method: 'POST' })
+}
+
+// --- session lifecycle (M16.5) ---
+
+export type SessionStatusResponse = {
+  status: string
+  running: boolean
+  coordinatorConnected: boolean
+  coordinatorStatus: string
+  pid: number | null
+  version: string
+  lifecycleSupported: boolean
+  dataflowCount: number
+  message: string
+}
+
+export function getSessionStatus(fallback: SessionStatusResponse) {
+  return withFallback('/session/status', fallback)
+}
+
+export function startSession() {
+  return fetchJson<SessionStatusResponse>('/session/start', { method: 'POST' })
+}
+
+export function stopSession() {
+  return fetchJson<SessionStatusResponse>('/session/stop', { method: 'POST' })
+}
+
+// --- recording capture (M16.5 D4) ---
+
+export type RecordingCaptureStatusResponse = {
+  status: string
+  outputPath: string | null
+  dataflowPath: string | null
+  startedAtMillis: number | null
+  frameCount: number | null
+  message: string
+}
+
+export type RecordingListEntryResponse = {
+  name: string
+  path: string
+  sizeBytes: number
+  createdAtMillis: number
+  frameCount: number | null
+}
+
+export function startRecordingCapture(dataflowPath: string) {
+  return fetchJson<RecordingCaptureStatusResponse>('/recording/capture', {
+    method: 'POST', headers: JSON_HEADER, body: JSON.stringify({ dataflowPath }),
+  })
+}
+
+export function stopRecordingCapture() {
+  return fetchJson<RecordingCaptureStatusResponse>('/recording/stop', { method: 'POST' })
+}
+
+export function getRecordingList(fallback: RecordingListEntryResponse[]) {
+  return withFallback('/recording/list', fallback)
 }
 
 // --- dataflow builder (M01) ---

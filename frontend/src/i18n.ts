@@ -170,6 +170,36 @@ type Messages = {
     modeManual: string
     modeAuto: string
   }
+  session: {
+    panelTitle: string
+    start: string
+    stop: string
+    starting: string
+    stopping: string
+    confirmStopTitle: string
+    confirmStopMessage: string
+    cancel: string
+    confirm: string
+    versionLabel: string
+    dataflowCountLabel: string
+    upgradeHint: string
+    externalNote: string
+    stopped: string
+    running: string
+    error: string
+    unavailable: string
+  }
+  recording: {
+    record: string
+    stopRecording: string
+    recording: string
+    frames: string
+    listTitle: string
+    empty: string
+    openInReplay: string
+    noSessionHint: string
+    failed: string
+  }
 }
 
 const messages: Record<Locale, Messages> = {
@@ -344,6 +374,36 @@ const messages: Record<Locale, Messages> = {
       modeManual: '手动目标',
       modeAuto: '自动轨道',
     },
+    session: {
+      panelTitle: '会话控制',
+      start: '启动会话',
+      stop: '停止会话',
+      starting: '启动中…',
+      stopping: '停止中…',
+      confirmStopTitle: '停止会话',
+      confirmStopMessage: '将停止所有运行中的数据流。确定继续？',
+      cancel: '取消',
+      confirm: '确认停止',
+      versionLabel: '版本',
+      dataflowCountLabel: '运行中数据流',
+      upgradeHint: '需要 dora 1.x（当前检测到 {version}）',
+      externalNote: '会话由外部启动',
+      stopped: '未启动',
+      running: '运行中',
+      error: '异常',
+      unavailable: '不可用',
+    },
+    recording: {
+      record: '录制',
+      stopRecording: '停止录制',
+      recording: '录制中…',
+      frames: '帧',
+      listTitle: '录制列表',
+      empty: '暂无录制',
+      openInReplay: '回放',
+      noSessionHint: '需要运行中的会话才能录制',
+      failed: '录制失败',
+    },
   },
   en: {
     app: {
@@ -515,6 +575,36 @@ const messages: Record<Locale, Messages> = {
       modeLabel: 'Mode',
       modeManual: 'manual goal',
       modeAuto: 'auto orbit',
+    },
+    session: {
+      panelTitle: 'Session',
+      start: 'Start session',
+      stop: 'Stop session',
+      starting: 'Starting…',
+      stopping: 'Stopping…',
+      confirmStopTitle: 'Stop session',
+      confirmStopMessage: 'This will stop all running dataflows. Continue?',
+      cancel: 'Cancel',
+      confirm: 'Stop',
+      versionLabel: 'Version',
+      dataflowCountLabel: 'Running dataflows',
+      upgradeHint: 'Requires dora 1.x (detected {version})',
+      externalNote: 'Session started externally',
+      stopped: 'Stopped',
+      running: 'Running',
+      error: 'Error',
+      unavailable: 'Unavailable',
+    },
+    recording: {
+      record: 'Record',
+      stopRecording: 'Stop recording',
+      recording: 'Recording…',
+      frames: 'frames',
+      listTitle: 'Recordings',
+      empty: 'No recordings yet',
+      openInReplay: 'Replay',
+      noSessionHint: 'A running session is required to record',
+      failed: 'Recording failed',
     },
   },
 }

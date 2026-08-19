@@ -1,25 +1,45 @@
 <template>
   <section class="view-stack">
-    <!-- Quick Start panel -->
-    <article v-if="!coordinatorConnected && !runtimeActive" class="panel quickstart-panel">
+    <!-- Session control panel -->
+    <article class="panel quickstart-panel session-panel">
       <div class="panel-header">
-        <h2>Quick Start</h2>
-        <span class="pill warning">No connection</span>
+        <h2>{{ t.session.panelTitle }}</h2>
+        <span :class="['pill', sessionPillClass]">{{ sessionPillText }}</span>
       </div>
-      <p class="muted">Studio needs either the dora daemon or a running dataflow to show live data.</p>
+      <p class="muted session-meta">
+        <span>{{ t.session.versionLabel }}: {{ session.version || '—' }}</span>
+        <span v-if="session.running">{{ t.session.dataflowCountLabel }}: {{ session.dataflowCount }}</span>
+        <span v-else-if="session.coordinatorConnected">{{ t.session.externalNote }}</span>
+      </p>
+      <p v-if="!session.lifecycleSupported" class="session-upgrade-hint">
+        {{ upgradeHint }}
+      </p>
       <div class="quickstart-actions">
         <button
           class="daemon-btn"
-          :disabled="daemonState !== 'stopped'"
-          @click="startDaemonHandler"
+          :disabled="!canStart && !canStop"
+          @click="session.running ? requestStop() : startSessionHandler()"
         >
-          {{ daemonLabel }}
+          {{ sessionButtonLabel }}
         </button>
-        <span class="quickstart-sep">or</span>
-        <button class="secondary" @click="$emit('navigate', 'monitor')">
-          Start a dataflow directly &rarr;
-        </button>
+        <template v-if="confirmingStop">
+          <button class="danger-button" @click="stopSessionHandler">
+            {{ t.session.confirm }}
+          </button>
+          <button class="secondary" @click="confirmingStop = false">
+            {{ t.session.cancel }}
+          </button>
+        </template>
+        <template v-else>
+          <span class="quickstart-sep">or</span>
+          <button class="secondary" @click="$emit('navigate', 'monitor')">
+            Start a dataflow directly &rarr;
+          </button>
+        </template>
       </div>
+      <p v-if="confirmingStop" class="muted session-confirm-note">
+        {{ t.session.confirmStopMessage }}
+      </p>
     </article>
 
     <div class="metric-grid">
@@ -53,11 +73,11 @@
             {{ coordinatorConnected ? `${coordinatorDataflows.length} dataflows` : 'unavailable' }}
           </span>
         </div>
-        <div v-if="!coordinatorConnected && daemonState === 'running'" class="empty-state">
-          Daemon is running. Waiting for coordinator to become available...
+        <div v-if="!coordinatorConnected && session.running" class="empty-state">
+          Session is starting. Waiting for the coordinator to become available...
         </div>
         <div v-else-if="!coordinatorConnected" class="empty-state">
-          Coordinator is not available. Use Quick Start above to launch the dora daemon.
+          Coordinator is not available. Start a session above to launch dora.
         </div>
         <div v-else-if="coordinatorDataflows.length === 0" class="empty-state">
           No dataflows registered with the coordinator.
@@ -103,26 +123,37 @@
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import {
   getCoordinatorStatus,
-  getDaemonStatus,
   getDvizStatus,
   getMoveitStatus,
   getRuntimeLogs,
   getRuntimeStatus,
+  getSessionStatus,
   getSystemStatus,
-  startDaemon,
+  startSession,
+  stopSession,
   type CoordinatorDataflowResponse,
   type DvizStatusResponse,
   type MoveitStatusResponse,
+  type SessionStatusResponse,
 } from '../api'
+import { useI18n } from '../i18n'
+import { canStartSession, canStopSession, sessionUiState, type SessionBusy } from '../session-ui'
 
 import type { ViewId } from '../types'
 
 defineEmits<{ navigate: [view: ViewId] }>()
 
+const { t } = useI18n()
+
 const coordinatorConnected = ref(false)
 const coordinatorVersion = ref('')
 const coordinatorDataflows = ref<CoordinatorDataflowResponse[]>([])
-const daemonState = ref<'stopped' | 'starting' | 'running'>('stopped')
+const session = ref<SessionStatusResponse>({
+  status: 'stopped', running: false, coordinatorConnected: false, coordinatorStatus: 'unavailable',
+  pid: null, version: '', lifecycleSupported: true, dataflowCount: 0, message: '',
+})
+const sessionBusy = ref<SessionBusy>('idle')
+const confirmingStop = ref(false)
 const runtimeStatus = ref('stopped')
 const runtimeActive = computed(() => runtimeStatus.value === 'running')
 const runtimeLastMessage = ref('')
@@ -136,25 +167,54 @@ const runtimeStatusText = computed(() => {
   return 'Stopped'
 })
 
-const daemonLabel = computed(() => {
-  if (daemonState.value === 'starting') return 'Starting daemon...'
-  if (daemonState.value === 'running') return 'Daemon is running'
-  return 'Start dora daemon'
+const uiState = computed(() => sessionUiState(session.value, sessionBusy.value))
+const canStart = computed(() => canStartSession(session.value, sessionBusy.value))
+const canStop = computed(() => canStopSession(session.value, sessionBusy.value))
+
+const sessionPillClass = computed(() => {
+  if (uiState.value === 'running') return 'success'
+  if (uiState.value === 'error') return 'failed'
+  if (uiState.value === 'unavailable' || uiState.value === 'starting' || uiState.value === 'stopping') return 'warning'
+  return 'stopped'
 })
+
+const sessionPillText = computed(() => {
+  switch (uiState.value) {
+    case 'running': return t.value.session.running
+    case 'starting': return t.value.session.starting
+    case 'stopping': return t.value.session.stopping
+    case 'error': return t.value.session.error
+    case 'unavailable': return t.value.session.unavailable
+    default: return t.value.session.stopped
+  }
+})
+
+const sessionButtonLabel = computed(() => {
+  if (sessionBusy.value === 'starting') return t.value.session.starting
+  if (sessionBusy.value === 'stopping') return t.value.session.stopping
+  return session.value.running ? t.value.session.stop : t.value.session.start
+})
+
+const upgradeHint = computed(() =>
+  t.value.session.upgradeHint.replace('{version}', session.value.version || 'unknown'),
+)
 
 const emptyStatus = { coordinator: '', daemon: '', version: '', runningDataflows: 0, activeNodes: 0, errorCount: 0 } as const
 
 let refreshTimer: number | undefined
 
 async function refreshDashboard() {
-  const [sysResult, coordResult, rtResult, logResult, dvizResult, moveitResult, daemonResult] = await Promise.all([
+  const [sysResult, coordResult, rtResult, logResult, dvizResult, moveitResult, sessionResult] = await Promise.all([
     getSystemStatus(emptyStatus),
     getCoordinatorStatus({ connected: false, version: '', runningDataflows: 0, activeNodes: 0, dataflows: [] }),
     getRuntimeStatus({ status: 'stopped', pid: null, lastMessage: '', dataflowId: null, dataflowPath: null }),
     getRuntimeLogs([]),
     getDvizStatus({ installed: false, running: false, binaryPath: null, message: 'Unable to check dviz status.' }),
     getMoveitStatus({ installed: false, running: false, message: 'Unable to check moveit status.' }),
-    getDaemonStatus({ running: false, pid: null }),
+    getSessionStatus({
+      status: 'stopped', running: false, coordinatorConnected: false, coordinatorStatus: 'unavailable',
+      pid: null, version: '', lifecycleSupported: true, dataflowCount: 0, message: '',
+    }),
   ])
 
   coordinatorConnected.value = sysResult.source === 'connected' && sysResult.data.coordinator === 'connected'
@@ -174,21 +234,35 @@ async function refreshDashboard() {
     recentLogs.value = logResult.data.slice(-5).reverse()
   }
 
-  // Track daemon state independently from coordinator
-  if (daemonState.value !== 'starting') {
-    daemonState.value = daemonResult.data.running ? 'running' : 'stopped'
-  }
+  session.value = sessionResult.data
 }
 
-async function startDaemonHandler() {
-  daemonState.value = 'starting'
+function requestStop() {
+  confirmingStop.value = true
+}
+
+async function startSessionHandler() {
+  confirmingStop.value = false
+  sessionBusy.value = 'starting'
   try {
-    await startDaemon()
-    daemonState.value = 'running'
-    await refreshDashboard()
+    session.value = await startSession()
   } catch {
-    daemonState.value = 'stopped'
+    // next poll reports the honest state
   }
+  sessionBusy.value = 'idle'
+  await refreshDashboard()
+}
+
+async function stopSessionHandler() {
+  confirmingStop.value = false
+  sessionBusy.value = 'stopping'
+  try {
+    session.value = await stopSession()
+  } catch {
+    // next poll reports the honest state
+  }
+  sessionBusy.value = 'idle'
+  await refreshDashboard()
 }
 
 onMounted(async () => {
@@ -221,6 +295,7 @@ onUnmounted(() => {
 .quickstart-actions {
   align-items: center;
   display: flex;
+  flex-wrap: wrap;
   gap: 16px;
   margin-top: 18px;
 }
@@ -228,6 +303,38 @@ onUnmounted(() => {
 .quickstart-sep {
   color: var(--text-muted, #94a3b8);
   font-size: 14px;
+}
+
+.session-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 20px;
+  margin-top: 10px;
+}
+
+.session-meta span {
+  color: var(--text-secondary, #475569);
+  font-size: 13px;
+}
+
+[data-theme="dark"] .session-meta span {
+  color: var(--text-muted-dark, #94a3b8);
+}
+
+.session-upgrade-hint {
+  background: var(--bg-surface, #f1f5f9);
+  border: 1px solid var(--hairline, #e2e8f0);
+  border-radius: 10px;
+  color: var(--accent-red, #ef4444);
+  font-size: 13px;
+  margin-top: 12px;
+  padding: 10px 14px;
+}
+
+.session-confirm-note {
+  color: var(--accent-yellow, #eab308);
+  font-size: 13px;
+  margin-top: 12px;
 }
 
 .daemon-btn:disabled {

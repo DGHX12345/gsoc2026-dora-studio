@@ -525,6 +525,16 @@ async function startReplay() {
   }
 }
 
+/// M16.5 D5: jump from Run & Monitor's recording list into the replay
+/// viewport and open the given recording through the existing flow.
+function openReplayFromRecording(path: string) {
+  replayPath.value = path
+  viewportMode.value = 'replay'
+  startReplay()
+}
+
+defineExpose({ openReplayFromRecording })
+
 // M10: apply a LeRobot action vector to the replay-mode viewport (first 6
 // joints). Stays in replay mode so the attribution panel remains mounted;
 // without an active .drec, replayJoints are the display pose.
