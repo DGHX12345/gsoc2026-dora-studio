@@ -1,10 +1,147 @@
-use std::{collections::HashMap, sync::Arc, time::Duration};
+use std::{
+    collections::{HashMap, HashSet},
+    path::{Path, PathBuf},
+    sync::{Arc, RwLock},
+    time::Duration,
+};
 
-pub(crate) fn resolve_dora_bin() -> String {
+// --- M17: user-level settings store (~/.config/dora-studio/settings.json) ---
+
+#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct DoraSettings {
+    #[serde(default)]
+    pub dora_bin: Option<String>,
+    #[serde(default)]
+    pub candidates: Vec<String>,
+}
+
+/// In-memory settings state; loaded lazily on first use and updated
+/// in place on switch. None = not loaded yet.
+static SETTINGS_STATE: RwLock<Option<DoraSettings>> = RwLock::new(None);
+
+pub(crate) fn settings_path() -> PathBuf {
+    std::env::var("DORA_STUDIO_SETTINGS")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
+            PathBuf::from(home).join(".config/dora-studio/settings.json")
+        })
+}
+
+fn save_settings_to(path: &Path, settings: &DoraSettings) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|error| format!("failed to create settings directory: {error}"))?;
+    }
+    let text = serde_json::to_string_pretty(settings)
+        .map_err(|error| format!("failed to serialize settings: {error}"))?;
+    std::fs::write(path, text).map_err(|error| format!("failed to write settings: {error}"))
+}
+
+fn save_settings(settings: &DoraSettings) -> Result<(), String> {
+    save_settings_to(&settings_path(), settings)
+}
+
+pub(crate) fn load_or_seed_settings() -> DoraSettings {
+    if let Some(settings) = SETTINGS_STATE.read().expect("settings lock").as_ref() {
+        return settings.clone();
+    }
+    let path = settings_path();
+    let settings = match std::fs::read_to_string(&path) {
+        Ok(text) => serde_json::from_str(&text).unwrap_or_default(),
+        Err(_) => {
+            let seeded = DoraSettings {
+                dora_bin: None,
+                candidates: seed_candidates(),
+            };
+            // Best-effort persist; a read-only HOME falls back to the
+            // in-memory state.
+            let _ = save_settings_to(&path, &seeded);
+            seeded
+        }
+    };
+    *SETTINGS_STATE.write().expect("settings lock") = Some(settings.clone());
+    settings
+}
+
+#[cfg(test)]
+pub(crate) fn reset_settings_state_for_tests() {
+    *SETTINGS_STATE.write().expect("settings lock") = None;
+}
+
+fn explicit_env_bin() -> Option<String> {
     std::env::var("DORA_STUDIO_DORA_BIN")
         .ok()
         .filter(|value| !value.trim().is_empty())
-        .unwrap_or_else(|| "dora".to_string())
+}
+
+/// Whether DORA_STUDIO_DORA_BIN currently overrides settings/PATH
+/// (the UI disables switching in this case).
+pub(crate) fn env_bin_overrides() -> bool {
+    explicit_env_bin().is_some()
+}
+
+/// First-run candidate seeding: the explicit env binary, the PATH
+/// `dora`, and the conventional venv / local install locations.
+fn seed_candidates_from(
+    explicit_bin: Option<String>,
+    path_entries: &[PathBuf],
+    home_dir: Option<&Path>,
+) -> Vec<String> {
+    let mut candidates = Vec::new();
+    if let Some(explicit) = explicit_bin {
+        candidates.push(explicit);
+    }
+    for entry in path_entries {
+        let candidate = entry.join("dora");
+        if candidate.exists() {
+            candidates.push(candidate.to_string_lossy().to_string());
+        }
+    }
+    if let Some(home) = home_dir {
+        let local = home.join(".local/bin/dora");
+        if local.exists() {
+            candidates.push(local.to_string_lossy().to_string());
+        }
+        if let Ok(entries) = std::fs::read_dir(home.join(".venvs")) {
+            for entry in entries.flatten() {
+                let candidate = entry.path().join("bin/dora");
+                if candidate.exists() {
+                    candidates.push(candidate.to_string_lossy().to_string());
+                }
+            }
+        }
+    }
+    let mut seen = HashSet::new();
+    candidates.retain(|candidate| seen.insert(candidate.clone()));
+    candidates
+}
+
+fn seed_candidates() -> Vec<String> {
+    let path_entries: Vec<PathBuf> = std::env::var("PATH")
+        .map(|path| std::env::split_paths(&path).collect())
+        .unwrap_or_default();
+    let home_dir = std::env::var("HOME")
+        .ok()
+        .map(PathBuf::from)
+        .filter(|path| !path.as_os_str().is_empty());
+    seed_candidates_from(explicit_env_bin(), &path_entries, home_dir.as_deref())
+}
+
+pub(crate) fn resolve_dora_bin() -> String {
+    // 1. explicit env var wins over everything
+    if let Some(explicit) = explicit_env_bin() {
+        return explicit;
+    }
+    // 2. user settings (M17)
+    if let Some(configured) = load_or_seed_settings().dora_bin {
+        return configured;
+    }
+    // 3. PATH lookup by Command
+    "dora".to_string()
 }
 
 pub(crate) fn normalize_dora_version(raw: &str) -> String {
@@ -90,17 +227,12 @@ async fn dora_version_cache() -> &'static tokio::sync::Mutex<HashMap<String, Arc
         .await
 }
 
-pub(crate) async fn dora_version() -> String {
-    let binary = resolve_dora_bin();
-    let cache = dora_version_cache().await;
-
-    if let Some(version) = cache.lock().await.get(&binary).cloned() {
-        return (*version).clone();
-    }
-
-    let version = match tokio::time::timeout(
+/// Query `<binary> --version` with a strict 3s timeout; any failure
+/// yields "unknown".
+pub(crate) async fn query_version_of(binary: &str) -> String {
+    match tokio::time::timeout(
         Duration::from_secs(3),
-        tokio::process::Command::new(&binary)
+        tokio::process::Command::new(binary)
             .arg("--version")
             .output(),
     )
@@ -117,10 +249,104 @@ pub(crate) async fn dora_version() -> String {
             }
         }
         _ => "unknown".to_string(),
-    };
+    }
+}
 
+pub(crate) async fn dora_version() -> String {
+    let binary = resolve_dora_bin();
+    let cache = dora_version_cache().await;
+
+    if let Some(version) = cache.lock().await.get(&binary).cloned() {
+        return (*version).clone();
+    }
+
+    let version = query_version_of(&binary).await;
     cache.lock().await.insert(binary, Arc::new(version.clone()));
     version
+}
+
+/// Drop all cached version lookups so the next query re-runs against
+/// the newly selected binary.
+pub(crate) async fn invalidate_version_cache() {
+    dora_version_cache().await.lock().await.clear();
+}
+
+// --- M17: detection and switching ---
+
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct DoraVersionItem {
+    pub path: String,
+    pub version: String,
+    pub compatible: bool,
+    pub active: bool,
+}
+
+/// Probe every configured candidate; unreachable binaries are
+/// silently skipped.
+pub(crate) async fn detect_versions() -> Vec<DoraVersionItem> {
+    let settings = load_or_seed_settings();
+    let active = resolve_dora_bin();
+    let mut items = Vec::new();
+    for candidate in settings.candidates {
+        let version = query_version_of(&candidate).await;
+        if version == "unknown" {
+            continue;
+        }
+        items.push(DoraVersionItem {
+            path: candidate.clone(),
+            compatible: lifecycle_supported(&version),
+            active: candidate == active,
+            version,
+        });
+    }
+    items
+}
+
+/// Validate a binary (exists + answers --version) and make it the
+/// active dora for all future subprocesses. The in-memory settings,
+/// the persisted settings file, and the version cache all update.
+pub(crate) async fn switch_dora_bin(path: String) -> Result<(), String> {
+    if !Path::new(&path).exists() {
+        return Err(format!("binary not found: {path}"));
+    }
+    if query_version_of(&path).await == "unknown" {
+        return Err(format!("not a working dora binary: {path}"));
+    }
+
+    let mut settings = load_or_seed_settings();
+    settings.dora_bin = Some(path.clone());
+    if !settings.candidates.contains(&path) {
+        settings.candidates.push(path.clone());
+    }
+    save_settings(&settings)?;
+    *SETTINGS_STATE.write().expect("settings lock") = Some(settings);
+    invalidate_version_cache().await;
+    Ok(())
+}
+
+pub(crate) fn add_candidate(path: String) -> Result<(), String> {
+    if !Path::new(&path).exists() {
+        return Err(format!("binary not found: {path}"));
+    }
+    let mut settings = load_or_seed_settings();
+    if !settings.candidates.contains(&path) {
+        settings.candidates.push(path.clone());
+    }
+    save_settings(&settings)?;
+    *SETTINGS_STATE.write().expect("settings lock") = Some(settings);
+    Ok(())
+}
+
+pub(crate) fn delete_candidate(path: String) -> Result<(), String> {
+    let mut settings = load_or_seed_settings();
+    settings.candidates.retain(|candidate| candidate != &path);
+    if settings.dora_bin.as_deref() == Some(&path) {
+        settings.dora_bin = None;
+    }
+    save_settings(&settings)?;
+    *SETTINGS_STATE.write().expect("settings lock") = Some(settings);
+    Ok(())
 }
 
 /// Shared lock for every test that mutates the process-global
@@ -137,7 +363,7 @@ mod tests {
         ffi::OsString,
         fs,
         os::unix::fs::PermissionsExt,
-        path::PathBuf,
+        path::{Path, PathBuf},
         sync::Mutex,
         time::{SystemTime, UNIX_EPOCH},
     };
@@ -181,15 +407,19 @@ mod tests {
     #[test]
     fn empty_binary_uses_path_name() {
         let _guard = ENV_LOCK.lock().unwrap();
+        let settings = SettingsEnvGuard::with_clean_dir("dora-settings-empty-bin");
         let _env = DoraBinEnvGuard::set("");
         assert_eq!(resolve_dora_bin(), "dora");
+        drop(settings);
     }
 
     #[test]
     fn missing_binary_uses_path_name() {
         let _guard = ENV_LOCK.lock().unwrap();
+        let settings = SettingsEnvGuard::with_clean_dir("dora-settings-missing-bin");
         let _env = DoraBinEnvGuard::remove();
         assert_eq!(resolve_dora_bin(), "dora");
+        drop(settings);
     }
 
     #[test]
@@ -303,6 +533,259 @@ mod tests {
         assert!(!lifecycle_supported("dora 1.invalid"));
         assert!(!lifecycle_supported("dora 1.0 unexpected"));
         assert!(!lifecycle_supported("unknown"));
+    }
+
+    // --- M17: settings-based resolution, detection, switching ---
+
+    fn unique_temp_dir(prefix: &str) -> PathBuf {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock is after Unix epoch")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("{prefix}-{}-{unique}", std::process::id()));
+        fs::create_dir_all(&dir).expect("create temp dir");
+        dir
+    }
+
+    struct SettingsEnvGuard {
+        previous: Option<OsString>,
+        dir: PathBuf,
+    }
+
+    impl SettingsEnvGuard {
+        fn set(path: &Path) -> Self {
+            let previous = std::env::var_os("DORA_STUDIO_SETTINGS");
+            std::env::set_var("DORA_STUDIO_SETTINGS", path);
+            Self {
+                previous,
+                dir: PathBuf::new(),
+            }
+        }
+
+        fn with_clean_dir(prefix: &str) -> Self {
+            let dir = unique_temp_dir(prefix);
+            let previous = std::env::var_os("DORA_STUDIO_SETTINGS");
+            std::env::set_var("DORA_STUDIO_SETTINGS", dir.join("settings.json"));
+            Self { previous, dir }
+        }
+    }
+
+    impl Drop for SettingsEnvGuard {
+        fn drop(&mut self) {
+            match self.previous.take() {
+                Some(value) => std::env::set_var("DORA_STUDIO_SETTINGS", value),
+                None => std::env::remove_var("DORA_STUDIO_SETTINGS"),
+            }
+            super::reset_settings_state_for_tests();
+            if !self.dir.as_os_str().is_empty() {
+                let _ = fs::remove_dir_all(&self.dir);
+            }
+        }
+    }
+
+    #[test]
+    fn settings_path_uses_env_override() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let custom = std::env::temp_dir().join("custom-settings.json");
+        let _settings = SettingsEnvGuard::set(&custom);
+        assert_eq!(super::settings_path(), custom);
+    }
+
+    #[test]
+    fn resolve_prefers_env_over_settings_over_path() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let guard = SettingsEnvGuard::with_clean_dir("dora-settings-resolve");
+        let settings_file = guard.dir.join("settings.json");
+        fs::write(
+            &settings_file,
+            r#"{"doraBin":"/opt/from-settings","candidates":[]}"#,
+        )
+        .unwrap();
+        let _settings = SettingsEnvGuard::set(&settings_file);
+
+        let _env = DoraBinEnvGuard::set("/opt/from-env");
+        assert_eq!(resolve_dora_bin(), "/opt/from-env");
+        drop(_env);
+
+        assert_eq!(resolve_dora_bin(), "/opt/from-settings");
+
+        fs::write(&settings_file, "{}").unwrap();
+        super::reset_settings_state_for_tests();
+        assert_eq!(resolve_dora_bin(), "dora");
+        let _ = fs::remove_dir_all(&guard.dir);
+    }
+
+    #[test]
+    fn missing_settings_seeds_candidates() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let guard = SettingsEnvGuard::with_clean_dir("dora-settings-seed");
+        let home = guard.dir.join("home");
+        let venv10 = home.join(".venvs/dora10/bin/dora");
+        let venv05 = home.join(".venvs/dora05/bin/dora");
+        let local = home.join(".local/bin/dora");
+        for path in [&venv10, &venv05, &local] {
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, "#!/bin/sh\n").unwrap();
+        }
+        let _home_env = std::env::var_os("HOME");
+        std::env::set_var("HOME", &home);
+        let _env = DoraBinEnvGuard::remove();
+        let settings_file = guard.dir.join("settings.json");
+
+        let settings = super::load_or_seed_settings();
+        assert!(settings.dora_bin.is_none());
+        assert!(settings
+            .candidates
+            .contains(&venv10.to_string_lossy().to_string()));
+        assert!(settings
+            .candidates
+            .contains(&venv05.to_string_lossy().to_string()));
+        assert!(settings
+            .candidates
+            .contains(&local.to_string_lossy().to_string()));
+        assert!(settings_file.exists(), "seeding persists the settings file");
+
+        match _home_env {
+            Some(value) => std::env::set_var("HOME", value),
+            None => std::env::remove_var("HOME"),
+        }
+    }
+
+    #[test]
+    fn seeded_candidates_are_deduplicated() {
+        let explicit = "/opt/dora/bin/dora".to_string();
+        let path_entries = [
+            PathBuf::from("/opt/dora/bin"),
+            PathBuf::from("/usr/local/bin"),
+        ];
+        let home = std::env::temp_dir().join("dora-seed-home");
+        let candidates =
+            super::seed_candidates_from(Some(explicit.clone()), &path_entries, Some(&home));
+        let mut counts = std::collections::HashMap::new();
+        for candidate in &candidates {
+            *counts.entry(candidate).or_insert(0usize) += 1;
+        }
+        assert!(
+            counts.values().all(|&count| count == 1),
+            "no duplicates: {candidates:?}"
+        );
+        assert!(candidates.contains(&explicit));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn detect_versions_marks_compatible_and_active() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let v10 = version_script("1.0.0-rc.4");
+        let v05 = version_script("0.5.0");
+        let _scripts = TempScriptsGuard::new([v10.clone(), v05.clone()]);
+        let guard = SettingsEnvGuard::with_clean_dir("dora-settings-detect");
+        let settings_file = guard.dir.join("settings.json");
+        fs::write(
+            &settings_file,
+            format!(
+                r#"{{"doraBin":"{}","candidates":["{}","{}"]}}"#,
+                v10.display(),
+                v10.display(),
+                v05.display()
+            ),
+        )
+        .unwrap();
+        let _settings = SettingsEnvGuard::set(&settings_file);
+        let _env = DoraBinEnvGuard::remove();
+
+        let items = super::detect_versions().await;
+        assert_eq!(items.len(), 2);
+        let item10 = items
+            .iter()
+            .find(|item| item.path == v10.to_string_lossy())
+            .unwrap();
+        assert_eq!(item10.version, "dora 1.0.0-rc.4");
+        assert!(item10.compatible);
+        assert!(item10.active);
+        let item05 = items
+            .iter()
+            .find(|item| item.path == v05.to_string_lossy())
+            .unwrap();
+        assert_eq!(item05.version, "dora 0.5.0");
+        assert!(!item05.compatible);
+        assert!(!item05.active);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn switch_validates_and_updates_resolution() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let v10 = version_script("1.0.0");
+        let v05 = version_script("0.5.0");
+        let _scripts = TempScriptsGuard::new([v10.clone(), v05.clone()]);
+        let guard = SettingsEnvGuard::with_clean_dir("dora-settings-switch");
+        let settings_file = guard.dir.join("settings.json");
+        fs::write(
+            &settings_file,
+            format!(
+                r#"{{"doraBin":"{}","candidates":["{}"]}}"#,
+                v10.display(),
+                v10.display()
+            ),
+        )
+        .unwrap();
+        let _settings = SettingsEnvGuard::set(&settings_file);
+        let _env = DoraBinEnvGuard::remove();
+
+        assert_eq!(resolve_dora_bin(), v10.to_string_lossy());
+        assert_eq!(dora_version().await, "dora 1.0.0");
+
+        assert!(super::switch_dora_bin("/does/not/exist".to_string())
+            .await
+            .is_err());
+
+        super::switch_dora_bin(v05.to_string_lossy().to_string())
+            .await
+            .expect("switch to valid binary");
+        assert_eq!(resolve_dora_bin(), v05.to_string_lossy());
+        assert_eq!(dora_version().await, "dora 0.5.0");
+
+        let persisted = fs::read_to_string(&settings_file).unwrap();
+        assert!(persisted.contains(&v05.to_string_lossy().to_string()));
+    }
+
+    #[test]
+    fn add_and_delete_candidates_persist() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let guard = SettingsEnvGuard::with_clean_dir("dora-settings-candidates");
+        let extra = guard.dir.join("extra-dora");
+        fs::write(&extra, "#!/bin/sh\n").unwrap();
+        let active = guard.dir.join("active-dora");
+        fs::write(&active, "#!/bin/sh\n").unwrap();
+        let settings_file = guard.dir.join("settings.json");
+        fs::write(
+            &settings_file,
+            format!(
+                r#"{{"doraBin":"{}","candidates":["{}"]}}"#,
+                active.display(),
+                active.display()
+            ),
+        )
+        .unwrap();
+        let _settings = SettingsEnvGuard::set(&settings_file);
+        let _env = DoraBinEnvGuard::remove();
+
+        super::add_candidate(extra.to_string_lossy().to_string()).unwrap();
+        let settings = super::load_or_seed_settings();
+        assert!(settings
+            .candidates
+            .contains(&extra.to_string_lossy().to_string()));
+
+        super::delete_candidate(extra.to_string_lossy().to_string()).unwrap();
+        let settings = super::load_or_seed_settings();
+        assert!(!settings
+            .candidates
+            .contains(&extra.to_string_lossy().to_string()));
+
+        // 删除当前生效的 binary → 回退到 PATH 解析
+        super::delete_candidate(active.to_string_lossy().to_string()).unwrap();
+        let settings = super::load_or_seed_settings();
+        assert!(settings.dora_bin.is_none());
+        assert_eq!(resolve_dora_bin(), "dora");
     }
 
     fn version_script(version: &str) -> PathBuf {
