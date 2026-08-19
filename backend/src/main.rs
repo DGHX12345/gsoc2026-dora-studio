@@ -17,6 +17,7 @@ mod otlp;
 mod otlp_grpc;
 mod profile;
 mod protocol;
+mod recording;
 mod runtime;
 mod schema_registry;
 mod session;
@@ -38,6 +39,7 @@ struct AppState {
     schemas: schema_registry::SchemaRegistry,
     ws_client: coordinator_ws::CoordinatorWsClient,
     recordings: drec::service::RecordingManager,
+    recording: recording::RecordingHandle,
     monitoring: monitoring::MonitoringController,
     profiles: profile::ProfileManager,
     live: live::LiveFeed,
@@ -79,6 +81,7 @@ async fn main() {
         schemas: schema_registry::SchemaRegistry::new(),
         ws_client,
         recordings: drec::service::RecordingManager::new(),
+        recording: recording::RecordingController::new(),
         monitoring: monitoring::MonitoringController::new(metrics_collector, otel_collector),
         profiles: profile::ProfileManager::new(
             &PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../profiles"),
@@ -138,6 +141,9 @@ async fn main() {
         .route("/api/otel/trace/:trace_id", get(otel_trace))
         .route("/api/monitoring/status", get(monitoring_status))
         .route("/api/monitoring/toggle", post(monitoring_toggle))
+        .route("/api/recording/capture", post(recording_capture))
+        .route("/api/recording/stop", post(recording_stop))
+        .route("/api/recording/list", get(recording_list))
         .route("/api/recording/open", post(recording_open))
         .route("/api/recording/:id/streams", get(recording_streams))
         .route("/api/recording/:id/seek", get(recording_seek))
@@ -713,6 +719,29 @@ async fn runtime_reload(
 // --- Recording API (M04) ---
 
 use axum::extract::Query;
+
+#[derive(serde::Deserialize)]
+struct RecordingCaptureRequest {
+    #[serde(rename = "dataflowPath")]
+    dataflow_path: String,
+}
+
+async fn recording_capture(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<RecordingCaptureRequest>,
+) -> Json<recording::RecordingStatus> {
+    Json(state.recording.capture(req.dataflow_path).await)
+}
+
+async fn recording_stop(State(state): State<Arc<AppState>>) -> Json<recording::RecordingStatus> {
+    Json(state.recording.stop().await)
+}
+
+async fn recording_list(
+    State(state): State<Arc<AppState>>,
+) -> Json<Vec<recording::RecordingEntry>> {
+    Json(state.recording.list().await)
+}
 
 async fn recording_open(
     State(state): State<Arc<AppState>>,
