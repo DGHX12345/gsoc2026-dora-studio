@@ -200,6 +200,20 @@ type Messages = {
     noSessionHint: string
     failed: string
   }
+  doraEnv: {
+    title: string
+    compatible: string
+    degraded: string
+    overridden: string
+    envOverride: string
+    degradedHint: string
+    switch: string
+    switched: string
+    add: string
+    addPlaceholder: string
+    delete: string
+    active: string
+  }
 }
 
 const messages: Record<Locale, Messages> = {
@@ -404,6 +418,20 @@ const messages: Record<Locale, Messages> = {
       noSessionHint: '需要运行中的会话才能录制',
       failed: '录制失败',
     },
+    doraEnv: {
+      title: 'dora 版本',
+      compatible: '兼容',
+      degraded: '降级',
+      overridden: '环境变量覆盖',
+      envOverride: 'DORA_STUDIO_DORA_BIN 环境变量已设置，切换已禁用',
+      degradedHint: '当前版本不支持：会话控制、WS 节点指标、录制',
+      switch: '切换',
+      switched: '已切换到 {version}',
+      add: '添加路径',
+      addPlaceholder: '/path/to/dora',
+      delete: '删除',
+      active: '当前',
+    },
   },
   en: {
     app: {
@@ -605,6 +633,20 @@ const messages: Record<Locale, Messages> = {
       openInReplay: 'Replay',
       noSessionHint: 'A running session is required to record',
       failed: 'Recording failed',
+    },
+    doraEnv: {
+      title: 'dora version',
+      compatible: 'Compatible',
+      degraded: 'Degraded',
+      overridden: 'Env override',
+      envOverride: 'DORA_STUDIO_DORA_BIN is set; switching is disabled',
+      degradedHint: 'Current version lacks: session control, WS node metrics, recording',
+      switch: 'Switch',
+      switched: 'Switched to {version}',
+      add: 'Add path',
+      addPlaceholder: '/path/to/dora',
+      delete: 'Delete',
+      active: 'active',
     },
   },
 }

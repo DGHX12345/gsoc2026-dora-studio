@@ -411,6 +411,43 @@ export function stopDaemon() {
   return fetchJson<DaemonStatusResponse>('/daemon/stop', { method: 'POST' })
 }
 
+// --- dora version manager (M17) ---
+
+export type DoraVersionItemResponse = {
+  path: string
+  version: string
+  compatible: boolean
+  active: boolean
+}
+
+export type DoraVersionsResponse = {
+  active: string
+  overriddenByEnv: boolean
+  items: DoraVersionItemResponse[]
+}
+
+export function getDoraVersions(fallback: DoraVersionsResponse) {
+  return withFallback('/dora/versions', fallback)
+}
+
+export function switchDoraVersion(path: string) {
+  return fetchJson<{ ok: boolean }>('/dora/switch', {
+    method: 'POST', headers: JSON_HEADER, body: JSON.stringify({ path }),
+  })
+}
+
+export function addDoraCandidate(path: string) {
+  return fetchJson<{ ok: boolean }>('/dora/candidates/add', {
+    method: 'POST', headers: JSON_HEADER, body: JSON.stringify({ path }),
+  })
+}
+
+export function deleteDoraCandidate(path: string) {
+  return fetchJson<{ ok: boolean }>('/dora/candidates/delete', {
+    method: 'POST', headers: JSON_HEADER, body: JSON.stringify({ path }),
+  })
+}
+
 // --- session lifecycle (M16.5) ---
 
 export type SessionStatusResponse = {

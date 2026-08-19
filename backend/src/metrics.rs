@@ -736,6 +736,10 @@ mod tests {
 
     #[tokio::test]
     async fn ws_source_with_unconnected_client_falls_back_to_cli() {
+        // This test spawns the resolved dora binary, so it must share the
+        // env/settings lock with the dora_env tests (parallel runs would
+        // otherwise read a transient temp settings path).
+        let _lock = crate::dora_env::TEST_ENV_LOCK.lock().unwrap();
         // A never-connected WS client fails fast, so the source must fall
         // back to the CLI poller and report "cli" as the active source.
         let client = crate::coordinator_ws::CoordinatorWsClient::new();

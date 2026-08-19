@@ -5,10 +5,13 @@ import {
   canStartSession,
   canStopDataflow,
   canStopSession,
+  canSwitchItem,
   formatBytes,
   formatRecordingTime,
   recordingAction,
   sessionUiState,
+  versionBadge,
+  type DoraVersionItem,
   type SessionStatus,
 } from './session-ui';
 
@@ -107,6 +110,39 @@ test('formatRecordingTime renders local clock time', () => {
   assert.match(formatted, /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/);
   assert.ok(formatted.startsWith('2026-08-18'), `starts with date, got ${formatted}`);
   assert.ok(formatted.endsWith('14:05:09'), `ends with local time, got ${formatted}`);
+});
+
+const versionItem = (partial: Partial<DoraVersionItem> = {}): DoraVersionItem => ({
+  path: '/opt/dora',
+  version: 'dora 1.0.0',
+  compatible: true,
+  active: false,
+  ...partial,
+});
+
+test('versionBadge follows the active item and env override', () => {
+  const items = [
+    versionItem({ path: '/a', version: 'dora 1.0.0', compatible: true, active: true }),
+    versionItem({ path: '/b', version: 'dora 0.5.0', compatible: false }),
+  ];
+  assert.equal(versionBadge(items, false), 'compatible');
+  assert.equal(versionBadge(items, true), 'overridden');
+  assert.equal(
+    versionBadge(
+      [versionItem({ version: 'dora 0.5.0', compatible: false, active: true })],
+      false,
+    ),
+    'degraded',
+  );
+  assert.equal(versionBadge([versionItem()], false), 'degraded');
+});
+
+test('switching is blocked for the active item and under env override', () => {
+  const inactive = versionItem();
+  const active = versionItem({ active: true });
+  assert.equal(canSwitchItem(inactive, false), true);
+  assert.equal(canSwitchItem(active, false), false);
+  assert.equal(canSwitchItem(inactive, true), false);
 });
 
 let failures = 0;

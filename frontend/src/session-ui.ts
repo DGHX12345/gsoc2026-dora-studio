@@ -59,6 +59,28 @@ export function recordingAction(recordingStatus: string, canRecord: boolean): Re
   return 'record'
 }
 
+// --- dora version manager (M17) ---
+
+export type DoraVersionItem = {
+  path: string
+  version: string
+  compatible: boolean
+  active: boolean
+}
+
+export type VersionBadge = 'compatible' | 'degraded' | 'overridden'
+
+export function versionBadge(items: DoraVersionItem[], overriddenByEnv: boolean): VersionBadge {
+  if (overriddenByEnv) return 'overridden'
+  const active = items.find((item) => item.active)
+  if (!active) return 'degraded'
+  return active.compatible ? 'compatible' : 'degraded'
+}
+
+export function canSwitchItem(item: DoraVersionItem, overriddenByEnv: boolean): boolean {
+  return !overriddenByEnv && !item.active
+}
+
 export function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`
   const units = ['KB', 'MB', 'GB', 'TB']

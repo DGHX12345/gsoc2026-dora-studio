@@ -42,6 +42,59 @@
       </p>
     </article>
 
+    <!-- dora version environment card (M17) -->
+    <article class="panel env-panel">
+      <div class="panel-header">
+        <h2>{{ t.doraEnv.title }}</h2>
+        <span :class="['pill', envBadgeClass]">{{ envBadgeText }}</span>
+      </div>
+      <p v-if="overriddenByEnv" class="env-override-hint">{{ t.doraEnv.envOverride }}</p>
+      <p v-else-if="envBadge === 'degraded'" class="env-degraded-hint">{{ t.doraEnv.degradedHint }}</p>
+      <ul class="env-list">
+        <li
+          v-for="item in doraItems"
+          :key="item.path"
+          :class="['env-item', { active: item.active }]"
+        >
+          <div class="env-item-info">
+            <strong>{{ item.version }}</strong>
+            <small>{{ item.path }}</small>
+          </div>
+          <span v-if="item.active" class="env-active-tag">{{ t.doraEnv.active }}</span>
+          <button
+            v-if="canSwitch(item)"
+            class="secondary"
+            @click="switchDora(item.path)"
+          >
+            {{ t.doraEnv.switch }}
+          </button>
+          <button
+            v-else-if="!item.active"
+            class="env-delete"
+            @click="removeCandidate(item.path)"
+          >
+            {{ t.doraEnv.delete }}
+          </button>
+        </li>
+      </ul>
+      <div class="env-actions">
+        <input
+          v-model="newCandidatePath"
+          type="text"
+          :placeholder="t.doraEnv.addPlaceholder"
+          @input="switchNote = ''"
+        />
+        <button
+          class="secondary"
+          :disabled="!newCandidatePath.trim()"
+          @click="addCandidate"
+        >
+          {{ t.doraEnv.add }}
+        </button>
+      </div>
+      <p v-if="switchNote" class="muted env-note">{{ switchNote }}</p>
+    </article>
+
     <div class="metric-grid">
       <article :class="['metric-card', 'large-metric', coordinatorConnected ? 'success' : 'warning']">
         <span>Coordinator</span>
@@ -122,7 +175,10 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import {
+  addDoraCandidate,
+  deleteDoraCandidate,
   getCoordinatorStatus,
+  getDoraVersions,
   getDvizStatus,
   getMoveitStatus,
   getRuntimeLogs,
@@ -131,13 +187,22 @@ import {
   getSystemStatus,
   startSession,
   stopSession,
+  switchDoraVersion,
   type CoordinatorDataflowResponse,
+  type DoraVersionItemResponse,
   type DvizStatusResponse,
   type MoveitStatusResponse,
   type SessionStatusResponse,
 } from '../api'
 import { useI18n } from '../i18n'
-import { canStartSession, canStopSession, sessionUiState, type SessionBusy } from '../session-ui'
+import {
+  canStartSession,
+  canStopSession,
+  canSwitchItem,
+  sessionUiState,
+  versionBadge,
+  type SessionBusy,
+} from '../session-ui'
 
 import type { ViewId } from '../types'
 
@@ -198,6 +263,70 @@ const sessionButtonLabel = computed(() => {
 const upgradeHint = computed(() =>
   t.value.session.upgradeHint.replace('{version}', session.value.version || 'unknown'),
 )
+
+// --- dora version environment card (M17) ---
+const doraItems = ref<DoraVersionItemResponse[]>([])
+const overriddenByEnv = ref(false)
+const newCandidatePath = ref('')
+const switchNote = ref('')
+
+const envBadge = computed(() => versionBadge(doraItems.value, overriddenByEnv.value))
+const envBadgeClass = computed(() => {
+  if (envBadge.value === 'compatible') return 'success'
+  if (envBadge.value === 'degraded') return 'failed'
+  return 'warning'
+})
+const envBadgeText = computed(() => {
+  if (envBadge.value === 'compatible') return t.value.doraEnv.compatible
+  if (envBadge.value === 'degraded') return t.value.doraEnv.degraded
+  return t.value.doraEnv.overridden
+})
+const canSwitch = (item: DoraVersionItemResponse) => canSwitchItem(item, overriddenByEnv.value)
+
+async function refreshDoraVersions() {
+  const result = await getDoraVersions({ active: '', overriddenByEnv: false, items: [] })
+  if (result.source === 'connected') {
+    doraItems.value = result.data.items
+    overriddenByEnv.value = result.data.overriddenByEnv
+  }
+}
+
+async function switchDora(path: string) {
+  try {
+    await switchDoraVersion(path)
+    await refreshDoraVersions()
+    const item = doraItems.value.find((entry) => entry.path === path)
+    switchNote.value = t.value.doraEnv.switched.replace(
+      '{version}',
+      item?.version ?? path,
+    )
+    await refreshDashboard()
+  } catch (error) {
+    switchNote.value = error instanceof Error ? error.message : 'Switch failed'
+  }
+}
+
+async function addCandidate() {
+  const path = newCandidatePath.value.trim()
+  if (!path) return
+  try {
+    await addDoraCandidate(path)
+    newCandidatePath.value = ''
+    await refreshDoraVersions()
+  } catch (error) {
+    switchNote.value = error instanceof Error ? error.message : 'Add failed'
+  }
+}
+
+async function removeCandidate(path: string) {
+  try {
+    await deleteDoraCandidate(path)
+    await refreshDoraVersions()
+    await refreshDashboard()
+  } catch (error) {
+    switchNote.value = error instanceof Error ? error.message : 'Delete failed'
+  }
+}
 
 const emptyStatus = { coordinator: '', daemon: '', version: '', runningDataflows: 0, activeNodes: 0, errorCount: 0 } as const
 
@@ -267,6 +396,7 @@ async function stopSessionHandler() {
 
 onMounted(async () => {
   await refreshDashboard()
+  await refreshDoraVersions()
   refreshTimer = window.setInterval(refreshDashboard, 5000)
 })
 
@@ -335,6 +465,106 @@ onUnmounted(() => {
   color: var(--accent-yellow, #eab308);
   font-size: 13px;
   margin-top: 12px;
+}
+
+.env-panel {
+  margin-top: 4px;
+}
+
+.env-override-hint {
+  color: var(--accent-yellow, #eab308);
+  font-size: 13px;
+  margin-top: 8px;
+}
+
+.env-degraded-hint {
+  color: var(--accent-red, #ef4444);
+  font-size: 13px;
+  margin-top: 8px;
+}
+
+.env-list {
+  display: grid;
+  gap: 8px;
+  list-style: none;
+  margin: 14px 0 0;
+  padding: 0;
+}
+
+.env-item {
+  align-items: center;
+  background: var(--bg-surface, #f8fafc);
+  border: 1px solid var(--hairline, #e2e8f0);
+  border-radius: 10px;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+  padding: 10px 14px;
+}
+
+.env-item.active {
+  border-color: var(--accent, #3b82f6);
+}
+
+.env-item-info {
+  min-width: 0;
+}
+
+.env-item-info strong {
+  display: block;
+  font-size: 14px;
+}
+
+.env-item-info small {
+  color: var(--text-muted, #94a3b8);
+  display: block;
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.env-active-tag {
+  color: var(--accent-green, #22c55e);
+  flex-shrink: 0;
+  font-size: 12px;
+}
+
+.env-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.env-actions input {
+  background: var(--bg-surface, #f8fafc);
+  border: 1px solid var(--hairline, #e2e8f0);
+  border-radius: 8px;
+  color: var(--text-body, #1e293b);
+  flex: 1;
+  font-size: 13px;
+  min-width: 0;
+  padding: 8px 12px;
+}
+
+[data-theme="dark"] .env-actions input {
+  background: var(--bg-surface, #0f172a);
+  color: var(--text-body, #e2e8f0);
+}
+
+.env-delete {
+  background: transparent;
+  border: 1px solid var(--hairline, #e2e8f0);
+  border-radius: 8px;
+  color: var(--text-muted, #94a3b8);
+  cursor: pointer;
+  flex-shrink: 0;
+  font-size: 12px;
+  padding: 5px 10px;
+}
+
+.env-note {
+  margin-top: 10px;
 }
 
 .daemon-btn:disabled {
