@@ -61,6 +61,7 @@ pub fn list_dataflows() -> Result<Vec<DataflowSummary>, DataflowError> {
             Ok(DataflowSummary {
                 id: file.id,
                 name: file.name,
+                project: "Studio Examples".to_string(),
                 status,
                 node_count,
                 edge_count,
@@ -876,5 +877,27 @@ nodes:
         };
 
         assert!(matches!(error, DataflowError::NotFound(_)));
+    }
+
+    #[test]
+    fn scan_dataflows_in_hashes_ids_of_canonical_paths() {
+        let dir = std::env::temp_dir().join(format!("dora-studio-scan-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(
+            dir.join("dataflow.yml"),
+            "nodes:\n  - id: n\n    outputs:\n      - out\n",
+        )
+        .unwrap();
+        let files = scan_dataflows_in(&dir, true).unwrap();
+        assert_eq!(files.len(), 1);
+        let canonical = fs::canonicalize(dir.join("dataflow.yml")).unwrap();
+        assert_eq!(
+            files[0].id,
+            hashed_dataflow_id(&canonical.to_string_lossy())
+        );
+        // non-hash mode keeps slug id derived from relative path
+        let files2 = scan_dataflows_in(&dir, false).unwrap();
+        assert_eq!(files2[0].id, "dataflow");
+        fs::remove_dir_all(&dir).ok();
     }
 }

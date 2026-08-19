@@ -280,11 +280,13 @@ pub struct SystemStatus {
     pub error_count: u32,
 }
 
-#[derive(Serialize)]
+#[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DataflowSummary {
     pub id: String,
     pub name: String,
+    #[serde(default)]
+    pub project: String,
     pub status: String,
     pub node_count: u32,
     pub edge_count: u32,
