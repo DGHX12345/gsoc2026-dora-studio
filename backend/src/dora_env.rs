@@ -14,6 +14,36 @@ pub(crate) struct DoraSettings {
     pub dora_bin: Option<String>,
     #[serde(default)]
     pub candidates: Vec<String>,
+    #[serde(default)]
+    pub project_dirs: Vec<String>,
+    #[serde(default)]
+    pub manual_nodes: Vec<ManualNode>,
+}
+
+// --- M18: manual node definitions + user project dirs (dataflow scanning) ---
+
+#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ManualPort {
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub urn: String,
+}
+
+#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ManualNode {
+    #[serde(default)]
+    pub id: String,
+    #[serde(default)]
+    pub path: String,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default)]
+    pub inputs: Vec<ManualPort>,
+    #[serde(default)]
+    pub outputs: Vec<ManualPort>,
 }
 
 /// In-memory settings state; loaded lazily on first use and updated
@@ -45,6 +75,64 @@ fn save_settings(settings: &DoraSettings) -> Result<(), String> {
     save_settings_to(&settings_path(), settings)
 }
 
+/// Load, mutate, persist, and refresh the in-memory settings cache in
+/// one step. Every settings mutation goes through here so the file and
+/// `SETTINGS_STATE` never drift apart.
+fn mutate_settings(mutator: impl FnOnce(&mut DoraSettings)) -> Result<DoraSettings, String> {
+    let mut settings = load_or_seed_settings();
+    mutator(&mut settings);
+    save_settings(&settings)?;
+    *SETTINGS_STATE.write().expect("settings lock") = Some(settings.clone());
+    Ok(settings)
+}
+
+pub(crate) fn project_dirs() -> Vec<String> {
+    load_or_seed_settings().project_dirs
+}
+
+pub(crate) fn add_project_dir(path: &str) -> Result<Vec<String>, String> {
+    let canonical = std::fs::canonicalize(path)
+        .map_err(|error| format!("invalid project directory {path}: {error}"))?;
+    if !canonical.is_dir() {
+        return Err(format!("not a directory: {path}"));
+    }
+    let canonical = canonical.to_string_lossy().to_string();
+    let settings = mutate_settings(|settings| {
+        if !settings
+            .project_dirs
+            .iter()
+            .any(|existing| existing == &canonical)
+        {
+            settings.project_dirs.push(canonical);
+        }
+    })?;
+    Ok(settings.project_dirs)
+}
+
+pub(crate) fn remove_project_dir(path: &str) -> Result<Vec<String>, String> {
+    let settings = mutate_settings(|settings| {
+        settings.project_dirs.retain(|existing| existing != path);
+    })?;
+    Ok(settings.project_dirs)
+}
+
+pub(crate) fn manual_nodes() -> Vec<ManualNode> {
+    load_or_seed_settings().manual_nodes
+}
+
+pub(crate) fn add_manual_node(node: ManualNode) -> Result<(), String> {
+    if node.id.trim().is_empty() || node.path.trim().is_empty() {
+        return Err("manual node requires id and path".to_string());
+    }
+    mutate_settings(|settings| {
+        settings
+            .manual_nodes
+            .retain(|existing| existing.id != node.id);
+        settings.manual_nodes.push(node);
+    })?;
+    Ok(())
+}
+
 pub(crate) fn load_or_seed_settings() -> DoraSettings {
     if let Some(settings) = SETTINGS_STATE.read().expect("settings lock").as_ref() {
         return settings.clone();
@@ -56,6 +144,7 @@ pub(crate) fn load_or_seed_settings() -> DoraSettings {
             let seeded = DoraSettings {
                 dora_bin: None,
                 candidates: seed_candidates(),
+                ..Default::default()
             };
             // Best-effort persist; a read-only HOME falls back to the
             // in-memory state.
@@ -786,6 +875,66 @@ mod tests {
         let settings = super::load_or_seed_settings();
         assert!(settings.dora_bin.is_none());
         assert_eq!(resolve_dora_bin(), "dora");
+    }
+
+    // --- M18: project dirs + manual nodes ---
+
+    #[test]
+    fn settings_seed_has_empty_project_dirs_and_manual_nodes() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let guard = SettingsEnvGuard::with_clean_dir("dora-settings-m18-seed");
+        let settings_file = guard.dir.join("settings.json");
+        fs::write(
+            &settings_file,
+            r#"{"doraBin":"/opt/from-settings","candidates":[]}"#,
+        )
+        .unwrap();
+        super::reset_settings_state_for_tests();
+        let settings = super::load_or_seed_settings();
+        assert!(settings.project_dirs.is_empty());
+        assert!(settings.manual_nodes.is_empty());
+    }
+
+    #[test]
+    fn add_project_dir_dedupes_and_persists() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let guard = SettingsEnvGuard::with_clean_dir("dora-settings-m18-proj");
+        let target = guard.dir.join("proj-a");
+        fs::create_dir_all(&target).unwrap();
+        super::reset_settings_state_for_tests();
+        let list = super::add_project_dir(target.to_string_lossy().as_ref()).unwrap();
+        assert_eq!(list.len(), 1);
+        // duplicate add is a no-op
+        let list2 = super::add_project_dir(target.to_string_lossy().as_ref()).unwrap();
+        assert_eq!(list2.len(), 1);
+        // persisted: fresh load sees it
+        super::reset_settings_state_for_tests();
+        assert_eq!(super::project_dirs().len(), 1);
+    }
+
+    #[test]
+    fn add_manual_node_persists_and_dedupes() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let guard = SettingsEnvGuard::with_clean_dir("dora-settings-m18-manual");
+        super::reset_settings_state_for_tests();
+        let node = super::ManualNode {
+            id: "my-converter".into(),
+            path: "/tmp/convert.py".into(),
+            description: "RGB to BGR".into(),
+            inputs: vec![super::ManualPort {
+                name: "image".into(),
+                urn: "std/media/v1/Image".into(),
+            }],
+            outputs: vec![super::ManualPort {
+                name: "image".into(),
+                urn: "std/media/v1/Image".into(),
+            }],
+        };
+        super::add_manual_node(node.clone()).unwrap();
+        super::add_manual_node(node).unwrap(); // duplicate id replaced
+        let nodes = super::manual_nodes();
+        assert_eq!(nodes.len(), 1);
+        assert_eq!(nodes[0].id, "my-converter");
     }
 
     fn version_script(version: &str) -> PathBuf {
