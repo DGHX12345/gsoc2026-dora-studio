@@ -70,14 +70,27 @@ struct SessionListEntry {
     status: String,
 }
 
-/// dora 1.0 serializes `dora list --format json` as an array, except
-/// when exactly one dataflow is registered — then it prints a single
-/// object. Accept both.
+/// dora 1.0 emits `dora list --format json` as JSON Lines: one JSON
+/// object per line, so N dataflows are N separate lines (not an
+/// array). Accept JSON Lines, a JSON array, and a single object.
 fn parse_list_entries(stdout: &str) -> Option<Vec<SessionListEntry>> {
-    if let Ok(entries) = serde_json::from_str::<Vec<SessionListEntry>>(stdout) {
+    let trimmed = stdout.trim();
+    if trimmed.is_empty() {
+        return Some(Vec::new());
+    }
+    let lines: Result<Vec<SessionListEntry>, _> = trimmed
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(serde_json::from_str)
+        .collect();
+    if let Ok(entries) = lines {
         return Some(entries);
     }
-    serde_json::from_str::<SessionListEntry>(stdout)
+    if let Ok(entries) = serde_json::from_str::<Vec<SessionListEntry>>(trimmed) {
+        return Some(entries);
+    }
+    serde_json::from_str::<SessionListEntry>(trimmed)
         .ok()
         .map(|entry| vec![entry])
 }
@@ -424,6 +437,27 @@ mod tests {
         assert!(status.coordinator_connected);
         assert_eq!(status.coordinator_status, "connected");
         assert_eq!(status.dataflow_count, 0);
+    }
+
+    /// dora 1.0 emits JSON Lines: N dataflows = N separate JSON
+    /// object lines, never a single array.
+    #[test]
+    fn parses_json_lines_list_output() {
+        let lines = concat!(
+            "{\"uuid\":\"a\",\"name\":\"one\",\"status\":\"Running\",\"nodes\":1}\n",
+            "{\"uuid\":\"b\",\"name\":\"two\",\"status\":\"Finished\",\"nodes\":0}\n",
+        );
+        let entries = super::parse_list_entries(lines).expect("JSON Lines parse");
+        assert_eq!(entries.len(), 2);
+
+        let array = format!("[{{\"status\":\"Running\"}}, {{\"status\":\"Finished\"}}]");
+        assert_eq!(super::parse_list_entries(&array).unwrap().len(), 2);
+
+        let single = "{\"status\":\"Running\"}";
+        assert_eq!(super::parse_list_entries(single).unwrap().len(), 1);
+
+        assert!(super::parse_list_entries("not-json").is_none());
+        assert_eq!(super::parse_list_entries("").unwrap().len(), 0);
     }
 
     /// dora 1.0 prints a single JSON object (not an array) for

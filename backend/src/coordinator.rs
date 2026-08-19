@@ -64,20 +64,27 @@ mod tests {
         assert_eq!(crate::dora_env::normalize_dora_version("\n"), "unknown");
     }
 
-    /// dora 1.0 prints a single object instead of an array when
-    /// exactly one dataflow is registered.
+    /// dora 1.0 emits JSON Lines: N dataflows = N separate JSON
+    /// object lines, never a single array.
     #[test]
-    fn parses_single_object_list_output() {
-        let single = r#"{"uuid":"df-1","name":"flow","status":"Running","nodes":2}"#;
-        let entries = parse_list_output(single).expect("single object parses");
-        assert_eq!(entries.len(), 1);
-        assert_eq!(entries[0].name, "flow");
-
-        let array = format!("[{single}, {single}]");
-        let entries = parse_list_output(&array).expect("array parses");
+    fn parses_json_lines_list_output() {
+        let lines = concat!(
+            "{\"uuid\":\"a\",\"name\":\"one\",\"status\":\"Running\",\"nodes\":1}\n",
+            "{\"uuid\":\"b\",\"name\":\"two\",\"status\":\"Finished\",\"nodes\":0}\n",
+        );
+        let entries = parse_list_output(lines).expect("JSON Lines parse");
         assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].name, "one");
+        assert_eq!(entries[1].name, "two");
+
+        let array = r#"[{"status":"Running"},{"status":"Finished"}]"#;
+        assert_eq!(parse_list_output(array).unwrap().len(), 2);
+
+        let single = r#"{"uuid":"df-1","name":"flow","status":"Running","nodes":2}"#;
+        assert_eq!(parse_list_output(single).unwrap().len(), 1);
 
         assert!(parse_list_output("not-json").is_none());
+        assert_eq!(parse_list_output("").unwrap().len(), 0);
     }
 }
 
@@ -107,13 +114,27 @@ fn running_dataflow_count(entries: &[DoraListEntry]) -> u32 {
         .count() as u32
 }
 
-/// dora 1.0 prints a single object instead of an array when exactly
-/// one dataflow is registered.
+/// dora 1.0 emits `dora list --format json` as JSON Lines: one JSON
+/// object per line. Accept JSON Lines, a JSON array, and a single
+/// object.
 fn parse_list_output(stdout: &str) -> Option<Vec<DoraListEntry>> {
-    if let Ok(entries) = serde_json::from_str::<Vec<DoraListEntry>>(stdout) {
+    let trimmed = stdout.trim();
+    if trimmed.is_empty() {
+        return Some(Vec::new());
+    }
+    let lines: Result<Vec<DoraListEntry>, _> = trimmed
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(serde_json::from_str)
+        .collect();
+    if let Ok(entries) = lines {
         return Some(entries);
     }
-    serde_json::from_str::<DoraListEntry>(stdout)
+    if let Ok(entries) = serde_json::from_str::<Vec<DoraListEntry>>(trimmed) {
+        return Some(entries);
+    }
+    serde_json::from_str::<DoraListEntry>(trimmed)
         .ok()
         .map(|entry| vec![entry])
 }
