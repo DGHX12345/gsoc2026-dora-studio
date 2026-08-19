@@ -110,9 +110,11 @@ pub(crate) fn add_project_dir(path: &str) -> Result<Vec<String>, String> {
 }
 
 pub(crate) fn remove_project_dir(path: &str) -> Result<Vec<String>, String> {
+    // Fall back to the raw path so a project dir that was already deleted
+    // on disk can still be removed from settings.
     let canonical = std::fs::canonicalize(path)
-        .map_err(|error| format!("invalid project directory {path}: {error}"))?;
-    let canonical = canonical.to_string_lossy().to_string();
+        .map(|canonical| canonical.to_string_lossy().to_string())
+        .unwrap_or_else(|_| path.to_string());
     let settings = mutate_settings(|settings| {
         settings
             .project_dirs
@@ -945,6 +947,24 @@ mod tests {
         // persisted: a fresh load sees the nested node (id + ports) again
         super::reset_settings_state_for_tests();
         assert_eq!(super::manual_nodes().len(), 1);
+    }
+
+    #[test]
+    fn remove_project_dir_works_when_dir_gone_from_disk() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let guard = SettingsEnvGuard::with_clean_dir("dora-settings-m18-proj-gone");
+        super::reset_settings_state_for_tests();
+        let target = guard.dir.join("proj-gone");
+        std::fs::create_dir_all(&target).unwrap();
+        let canonical = std::fs::canonicalize(&target)
+            .unwrap()
+            .to_string_lossy()
+            .to_string();
+        super::add_project_dir(canonical.as_ref()).unwrap();
+        std::fs::remove_dir_all(&target).unwrap();
+        // dir no longer exists on disk — removal must still succeed
+        let list = super::remove_project_dir(canonical.as_ref()).unwrap();
+        assert!(list.is_empty());
     }
 
     #[test]
