@@ -191,19 +191,16 @@ pub(crate) fn palette_for_dirs(dirs: &[PathBuf]) -> Vec<PaletteEntry> {
                 by_path
                     .entry(key.clone())
                     .and_modify(|entry| {
-                        // merge: keep the entry with richer type info
-                        if entry.inputs.iter().all(|port| port.urn.is_none())
-                            && !node.input_types.is_empty()
-                        {
+                        // merge: fill in missing URNs from the incoming node; existing
+                        // per-port URNs are never overwritten (first scan wins on conflict).
+                        if !node.input_types.is_empty() {
                             for port in &mut entry.inputs {
                                 if let Some(urn) = node.input_types.get(&port.name) {
                                     port.urn = Some(urn.clone());
                                 }
                             }
                         }
-                        if entry.outputs.iter().all(|port| port.urn.is_none())
-                            && !node.output_types.is_empty()
-                        {
+                        if !node.output_types.is_empty() {
                             for port in &mut entry.outputs {
                                 if let Some(urn) = node.output_types.get(&port.name) {
                                     port.urn = Some(urn.clone());
@@ -316,6 +313,49 @@ mod tests {
         let cam = &entries[0];
         assert_eq!(cam.outputs[0].name, "image");
         assert_eq!(cam.outputs[0].urn.as_deref(), Some("std/media/v1/Image"));
+        fs::remove_dir_all(&a).ok();
+        fs::remove_dir_all(&b).ok();
+    }
+
+    #[test]
+    fn palette_merge_fills_missing_urns_from_later_projects() {
+        // untyped project first, typed project second -> URNs filled in
+        let a = tmp_project(
+            "a-untyped",
+            "nodes:\n  - id: cam\n    path: cam.py\n    outputs:\n      - image\n",
+        );
+        let b = tmp_project("b-typed", "nodes:\n  - id: cam\n    path: cam.py\n    outputs:\n      - image\n    output_types:\n      image: std/media/v1/Image\n");
+        let entries = palette_for_dirs(&[a.clone(), b.clone()]);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(
+            entries[0].outputs[0].urn.as_deref(),
+            Some("std/media/v1/Image")
+        );
+        fs::remove_dir_all(&a).ok();
+        fs::remove_dir_all(&b).ok();
+    }
+
+    #[test]
+    fn palette_merge_fills_partial_urn_coverage() {
+        // first project types only port x; later project types x and y -> y filled
+        let a = tmp_project(
+            "a-partial",
+            "nodes:\n  - id: node\n    path: node.py\n    outputs:\n      - x\n      - y\n    output_types:\n      x: std/core/v1/UInt8\n",
+        );
+        let b = tmp_project(
+            "b-full",
+            "nodes:\n  - id: node\n    path: node.py\n    outputs:\n      - x\n      - y\n    output_types:\n      x: std/core/v1/UInt8\n      y: std/core/v1/String\n",
+        );
+        let entries = palette_for_dirs(&[a.clone(), b.clone()]);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(
+            entries[0].outputs[0].urn.as_deref(),
+            Some("std/core/v1/UInt8")
+        );
+        assert_eq!(
+            entries[0].outputs[1].urn.as_deref(),
+            Some("std/core/v1/String")
+        );
         fs::remove_dir_all(&a).ok();
         fs::remove_dir_all(&b).ok();
     }
