@@ -42,12 +42,16 @@
       </p>
     </article>
 
-    <!-- dora version environment card (M17) -->
-    <article class="panel env-panel">
-      <div class="panel-header">
-        <h2>{{ t.doraEnv.title }}</h2>
-        <span :class="['pill', envBadgeClass]">{{ envBadgeText }}</span>
-      </div>
+    <!-- dora version environment card (M17): collapsed by default, the
+         summary shows the badge and active version at a glance. -->
+    <details class="panel env-panel">
+      <summary class="env-summary">
+        <span class="env-summary-header">
+          <h2>{{ t.doraEnv.title }}</h2>
+          <span :class="['pill', envBadgeClass]">{{ envBadgeText }}</span>
+        </span>
+        <span class="muted env-active-version">{{ activeVersionText }}</span>
+      </summary>
       <p v-if="overriddenByEnv" class="env-override-hint">{{ t.doraEnv.envOverride }}</p>
       <p v-else-if="envBadge === 'degraded'" class="env-degraded-hint">{{ t.doraEnv.degradedHint }}</p>
       <ul class="env-list">
@@ -93,7 +97,7 @@
         </button>
       </div>
       <p v-if="switchNote" class="muted env-note">{{ switchNote }}</p>
-    </article>
+    </details>
 
     <div class="metric-grid">
       <article :class="['metric-card', 'large-metric', coordinatorConnected ? 'success' : 'warning']">
@@ -280,6 +284,10 @@ const envBadgeText = computed(() => {
   if (envBadge.value === 'compatible') return t.value.doraEnv.compatible
   if (envBadge.value === 'degraded') return t.value.doraEnv.degraded
   return t.value.doraEnv.overridden
+})
+const activeVersionText = computed(() => {
+  const active = doraItems.value.find((item) => item.active)
+  return active ? active.version : '—'
 })
 const canSwitch = (item: DoraVersionItemResponse) => canSwitchItem(item, overriddenByEnv.value)
 
@@ -469,6 +477,34 @@ onUnmounted(() => {
 
 .env-panel {
   margin-top: 4px;
+}
+
+.env-summary {
+  align-items: center;
+  cursor: pointer;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 20px;
+  justify-content: space-between;
+  list-style: none;
+}
+
+.env-summary::-webkit-details-marker {
+  display: none;
+}
+
+.env-summary-header {
+  align-items: center;
+  display: flex;
+  gap: 12px;
+}
+
+.env-summary-header h2 {
+  font-size: 16px;
+}
+
+.env-active-version {
+  font-size: 13px;
 }
 
 .env-override-hint {
