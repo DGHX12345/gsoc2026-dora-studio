@@ -594,6 +594,7 @@ fn find_yaml_source(yaml: &str, node: &str, port: &str) -> Option<(String, Strin
     let lines: Vec<&str> = yaml.lines().collect();
     let mut in_target_node = false;
     let mut in_target_port = false;
+    let mut in_inputs = false;
 
     for (i, line) in lines.iter().enumerate() {
         let trimmed = line.trim_start();
@@ -605,11 +606,29 @@ fn find_yaml_source(yaml: &str, node: &str, port: &str) -> Option<(String, Strin
             || (indent <= 2 && trimmed == format!("- id: {}", node))
         {
             in_target_node = true;
+            in_inputs = false;
             continue;
         }
         if in_target_node && indent <= 2 && !trimmed.is_empty() {
             in_target_node = false;
             in_target_port = false;
+            in_inputs = false;
+        }
+
+        // Track the node's `inputs:` section: the compact `name: node/port`
+        // source form only applies there. Without this, `input_types:`
+        // entries like `image: std/media/v1/Image` are mistaken for a source
+        // reference when input_types precedes inputs, and the real edge is
+        // silently dropped (order-dependent).
+        if in_target_node && indent == 4 {
+            if trimmed == "inputs:" {
+                in_inputs = true;
+            } else if trimmed == "input_types:"
+                || trimmed == "outputs:"
+                || trimmed == "output_types:"
+            {
+                in_inputs = false;
+            }
         }
 
         if in_target_node && indent == 6 && trimmed == format!("{}:", port) {
@@ -617,7 +636,7 @@ fn find_yaml_source(yaml: &str, node: &str, port: &str) -> Option<(String, Strin
             continue;
         }
         // Compact inline source form: `image: cam/image` (older dora).
-        if in_target_node && indent == 6 {
+        if in_target_node && in_inputs && indent == 6 {
             if let Some((name, src)) = trimmed.split_once(':') {
                 if name.trim() == port && !src.trim().is_empty() {
                     let source = src.trim();
@@ -785,17 +804,32 @@ fn find_node_blocks(lines: &[String]) -> BTreeMap<String, (usize, usize)> {
         if in_nodes {
             let indent = line.chars().take_while(|ch| ch.is_whitespace()).count();
             if indent == 0 && !trimmed.is_empty() {
+                // Top-level comments between node blocks are not content:
+                // keep scanning the nodes section, but close any open block
+                // so the comment is not swallowed by the re-rendered block.
+                if trimmed.starts_with('#') {
+                    if let Some((id, start)) = current.take() {
+                        blocks.insert(id, (start, index - 1));
+                    }
+                    continue;
+                }
                 in_nodes = false;
                 if let Some((id, start)) = current.take() {
                     blocks.insert(id, (start, index - 1));
                 }
                 continue;
             }
-            if let Some(id) = trimmed.strip_prefix("- id:") {
-                if let Some((prev_id, start)) = current.take() {
-                    blocks.insert(prev_id, (start, index - 1));
+            // Node list items sit at indent 2. A `- id:` deeper inside a
+            // nested section (e.g. a custom list) must not be treated as a
+            // node block, or the phantom block's lines vanish from the
+            // patched output.
+            if indent == 2 {
+                if let Some(id) = trimmed.strip_prefix("- id:") {
+                    if let Some((prev_id, start)) = current.take() {
+                        blocks.insert(prev_id, (start, index - 1));
+                    }
+                    current = Some((id.trim().to_string(), index));
                 }
-                current = Some((id.trim().to_string(), index));
             }
         }
     }
@@ -1255,5 +1289,123 @@ env:
         let patched = patch_yaml(original, &b.graph()).expect("patches");
         assert!(!patched.contains("type: image"));
         assert!(patched.contains("output_types:\n      image: std/media/v1/Image"));
+    }
+
+    #[test]
+    fn patch_preserves_edges_when_input_types_precede_inputs() {
+        let original = r#"nodes:
+  - id: sink
+    path: sink.py
+    input_types:
+      image: std/media/v1/Image
+    inputs:
+      image: cam/image
+  - id: cam
+    path: cam.py
+    outputs:
+      - image
+"#;
+        let mut b = DataflowBuilder::from_yaml(original).expect("parses");
+        assert_eq!(
+            b.graph().edges.len(),
+            1,
+            "edge must survive input_types-before-inputs ordering"
+        );
+        let sink = b.nodes.get_mut("sink").unwrap();
+        // PortSpec.port_type is the canonical type channel (render_node_block
+        // merges with port_type winning over input_types), and from_yaml has
+        // backfilled it from the fixture's input_types — so update it directly
+        // for the type edit to take effect.
+        sink.input_types
+            .insert("image".into(), "std/core/v1/Bytes".into());
+        sink.inputs.get_mut("image").unwrap().port_type = Some("std/core/v1/Bytes".into());
+        let patched = patch_yaml(original, &b.graph()).expect("patches");
+        assert!(patched.contains("cam/image"), "source must be preserved");
+        assert!(patched.contains("std/core/v1/Bytes"));
+    }
+
+    #[test]
+    fn patch_ignores_nested_list_items_in_node_sections() {
+        let original = r#"nodes:
+  - id: a
+    path: a.py
+    custom_list:
+      - id: nested
+        x: 1
+    outputs:
+      - out
+"#;
+        // A nested `- id:` inside a node section must not be mistaken for a
+        // node block boundary: no phantom "nested" block may be registered.
+        let lines: Vec<String> = original.lines().map(str::to_string).collect();
+        let blocks = find_node_blocks(&lines);
+        assert_eq!(
+            blocks.len(),
+            1,
+            "nested - id: must not open a phantom node block"
+        );
+        assert_eq!(
+            blocks.get("a"),
+            Some(&(1, 7)),
+            "node a covers its whole block"
+        );
+
+        let mut b = DataflowBuilder::from_yaml(original).expect("parses");
+        b.nodes
+            .get_mut("a")
+            .unwrap()
+            .output_types
+            .insert("out".into(), "std/core/v1/String".into());
+        let patched = patch_yaml(original, &b.graph()).expect("patches");
+        assert!(patched.contains("output_types:\n      out: std/core/v1/String"));
+    }
+
+    #[test]
+    fn patch_handles_top_level_comments_between_nodes() {
+        let original = r#"nodes:
+  - id: a
+    path: a.py
+    outputs:
+      - out
+# comment between blocks
+  - id: b
+    path: b.py
+    outputs:
+      - out
+"#;
+        // from_yaml stops parsing at any top-level non-node line (the
+        // comment), so node "b" would never be parsed from this fixture —
+        // build the graph directly instead.
+        let mut b = DataflowBuilder::new();
+        for (id, path) in [("a", "a.py"), ("b", "b.py")] {
+            let mut outputs = BTreeMap::new();
+            outputs.insert(
+                "out".to_string(),
+                PortSpec {
+                    port_type: None,
+                    description: None,
+                },
+            );
+            b.add_node(NodeSpec {
+                id: id.into(),
+                operator_id: id.into(),
+                runtime: Runtime::Python,
+                path: Some(path.into()),
+                inputs: BTreeMap::new(),
+                outputs,
+                input_types: BTreeMap::new(),
+                output_types: BTreeMap::new(),
+                position: None,
+            })
+            .unwrap();
+        }
+        b.nodes.get_mut("b").unwrap().path = Some("b2.py".into());
+        let patched = patch_yaml(original, &b.graph()).expect("patches");
+        assert!(
+            patched.contains("# comment between blocks"),
+            "comment preserved"
+        );
+        assert!(patched.contains("path: b2.py"), "node b edit applied");
+        assert!(patched.contains("path: a.py"));
     }
 }
