@@ -180,7 +180,6 @@ import {
   type ManualNodeSpec,
   type TypeRule,
   type SaveIssue,
-  type SaveResponse,
 } from '../api'
 import DataflowCanvas from './DataflowCanvas.vue'
 import NodePalette from './NodePalette.vue'
@@ -188,6 +187,7 @@ import PortTypePanel from './PortTypePanel.vue'
 import TypeRulesPanel from './TypeRulesPanel.vue'
 import { definitionToGraph, graphToPayload } from '../dataflow-convert'
 import { edgeLevel, edgeColor, buildRulePatch } from '../edge-status'
+import { issuesToEdgeStyles, parseSaveError } from '../save-issues'
 import type { DataflowGraph as CanvasGraph } from './DataflowCanvas.vue'
 
 const emptyDefinition: DataflowDefinitionResponse = {
@@ -200,7 +200,6 @@ const typeRules = ref<TypeRule[]>([])
 const editingDefinition = ref<DataflowDefinitionResponse | null>(null)
 const sourceSubView = ref<'canvas' | 'text'>('canvas')
 const saveStatus = ref('')
-const edgeStatuses = ref<Record<string, string>>({})
 
 const definition = ref<DataflowDefinitionResponse | null>(null)
 const selectedDataflowId = ref('')
@@ -391,8 +390,10 @@ function clearBuild() {
 
 const edgeStyles = ref<Record<string, { color: string; tooltip: string }>>({})
 const schemaChecking = ref(false)
+let checkSeq = 0
 
 async function checkAllEdges() {
+  const seq = ++checkSeq
   schemaChecking.value = true
   const styles: Record<string, { color: string; tooltip: string }> = {}
   for (const edge of buildGraph.value.edges) {
@@ -414,6 +415,7 @@ async function checkAllEdges() {
       styles[edge.id] = { color: 'var(--text-muted-dark)', tooltip: 'Schema check unavailable' }
     }
   }
+  if (seq !== checkSeq) return   // a newer run superseded this one
   edgeStyles.value = styles
   schemaChecking.value = false
 }
@@ -433,35 +435,25 @@ async function saveCurrent() {
       saveStatus.value = `Save blocked: ${result.errors.length} error(s)`
       applySaveIssues(result.errors, true)
     } else {
+      // Reload first: loadDataflow resets saveStatus and re-runs the schema
+      // edge checks, so the success message must be set after it completes.
+      await loadDataflow(editingDefinition.value.id)
       saveStatus.value = `Saved to ${result.path}${result.warnings.length ? ` (${result.warnings.length} warning(s))` : ''}`
       applySaveIssues(result.warnings, false)
-      await loadDataflow(editingDefinition.value.id)
     }
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e)
     saveStatus.value = `Save failed: ${message}`
-    try {
-      // The 422 body arrives as a JSON string inside the ApiError error
-      // field ("API request failed: 422 — {"ok":false,...}"); parse it so
-      // per-edge save errors surface on the canvas.
-      const parsed = JSON.parse(message.replace(/^.*?\{/, '{')) as SaveResponse
-      if (!parsed.ok) applySaveIssues(parsed.errors, true)
-    } catch { /* plain error message */ }
+    // The 422 body arrives as a JSON string inside the ApiError error field
+    // ("API request failed: 422 — {"ok":false,...}"); parse it so per-edge
+    // save errors surface on the canvas.
+    const parsed = parseSaveError(message)
+    if (parsed && !parsed.ok) applySaveIssues(parsed.errors, true)
   }
 }
 
 function applySaveIssues(issues: SaveIssue[], blocking: boolean) {
-  const styles: Record<string, { color: string; tooltip: string }> = {}
-  for (const issue of issues) {
-    for (const edge of buildGraph.value.edges) {
-      const matchesPort = (issue.portId && (edge.sourcePort === issue.portId || edge.targetPort === issue.portId)) ||
-        (!issue.portId && issue.nodeId && (edge.sourceNode === issue.nodeId || edge.targetNode === issue.nodeId))
-      if (matchesPort) {
-        styles[edge.id] = { color: blocking ? 'var(--accent-red)' : 'var(--accent-yellow)', tooltip: issue.message }
-      }
-    }
-  }
-  edgeStyles.value = { ...edgeStyles.value, ...styles }
+  edgeStyles.value = { ...edgeStyles.value, ...issuesToEdgeStyles(issues, buildGraph.value, blocking) }
 }
 
 async function saveAsCurrent() {
