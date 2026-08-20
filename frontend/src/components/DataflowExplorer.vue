@@ -16,25 +16,27 @@
         ＋ Add project directory
       </button>
 
-      <div v-for="project in projects" :key="project.path" class="project-group">
-        <div class="project-group-header">
-          <span class="project-group-name">{{ project.name }}</span>
-          <span v-if="project.builtin" class="project-group-builtin">builtin</span>
-          <span class="project-group-count">{{ project.dataflows.length }}</span>
+      <div class="flows-scroll">
+        <div v-for="project in projects" :key="project.path" class="project-group">
+          <div class="project-group-header">
+            <span class="project-group-name">{{ project.name }}</span>
+            <span v-if="project.builtin" class="project-group-builtin">builtin</span>
+            <span class="project-group-count">{{ project.dataflows.length }}</span>
+          </div>
+          <button
+            v-for="flow in project.dataflows"
+            :key="flow.id"
+            :class="['flow-file', { active: selectedDataflowId === flow.id }]"
+            :title="flow.name"
+            @click="selectDataflow(flow.id)"
+          >
+            <span class="flow-name-row">
+              <strong>{{ flow.name }}</strong>
+              <span :class="['status-chip', flow.status]">{{ flow.status }}</span>
+            </span>
+            <small>{{ flow.nodeCount }} nodes &middot; {{ flow.edgeCount }} edges</small>
+          </button>
         </div>
-        <button
-          v-for="flow in project.dataflows"
-          :key="flow.id"
-          :class="['flow-file', { active: selectedDataflowId === flow.id }]"
-          :title="flow.name"
-          @click="selectDataflow(flow.id)"
-        >
-          <span class="flow-name-row">
-            <strong>{{ flow.name }}</strong>
-            <span :class="['status-chip', flow.status]">{{ flow.status }}</span>
-          </span>
-          <small>{{ flow.nodeCount }} nodes &middot; {{ flow.edgeCount }} edges</small>
-        </button>
       </div>
 
       <details class="diagnostics-box collapsible" open>
@@ -555,6 +557,14 @@ onMounted(async () => {
 
 .flow-name-row .status-chip {
   flex-shrink: 0;
+}
+
+/* Scrollable flow list: full names render un-truncated, and the list
+   scrolls vertically instead of overflowing the sidebar bottom edge. */
+.flows-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
 }
 
 .flow-file small {
