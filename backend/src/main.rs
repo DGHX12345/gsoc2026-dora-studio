@@ -1,4 +1,5 @@
 mod attribution;
+mod compat_engine;
 mod coordinator;
 mod coordinator_ws;
 mod dataflow_builder;
