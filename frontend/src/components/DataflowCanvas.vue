@@ -4,7 +4,7 @@ import { getRuntimeNodeStatuses, reloadNode, type NodeRuntimeStatusResponse } fr
 
 export interface PortSpec { type?: string; description?: string }
 export interface NodeSpec {
-  id: string; operatorId: string; runtime: string;
+  id: string; operatorId: string; runtime: string; path?: string;
   inputs: Record<string, PortSpec>; outputs: Record<string, PortSpec>;
   position: { x: number; y: number };
 }

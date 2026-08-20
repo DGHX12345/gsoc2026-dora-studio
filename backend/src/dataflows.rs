@@ -1,6 +1,6 @@
 use crate::models::{
     DataflowDefinition, DataflowDefinitionNode, DataflowGraph, DataflowSummary, Diagnostic,
-    GraphEdge, GraphNode, NodeMetrics,
+    GraphEdge, GraphNode, NodeMetrics, TypeRuleDef,
 };
 use std::{
     collections::{BTreeMap, HashMap},
@@ -79,16 +79,38 @@ pub fn load_definition(id: &str) -> Result<DataflowDefinition, DataflowError> {
     let node_count = parsed.nodes.len() as u32;
     let edge_count = edge_count(&parsed);
     let nodes = parsed.nodes.into_iter().map(definition_node).collect();
+    let type_rules = parsed
+        .type_rules
+        .into_iter()
+        .map(|(from, to)| TypeRuleDef { from, to })
+        .collect();
 
     Ok(DataflowDefinition {
         id: file.id,
         name: file.name,
-        relative_path: file.relative_path,
+        relative_path: file.relative_path.clone(),
         source,
         node_count,
         edge_count,
+        project: project_name(&file.relative_path),
+        type_rules,
         nodes,
     })
+}
+
+/// Minimal project attribution for a definition: builtin examples live under
+/// "examples/" in the workspace, everything else derives from the first path
+/// segment of the relative path (project-dir scans are rooted at the project).
+fn project_name(relative_path: &str) -> String {
+    if relative_path.starts_with("examples/") {
+        return "Studio Examples".to_string();
+    }
+    relative_path
+        .split('/')
+        .next()
+        .filter(|segment| !segment.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| "Studio Examples".to_string())
 }
 
 pub fn graph(id: &str) -> Result<DataflowGraph, DataflowError> {
@@ -348,6 +370,8 @@ fn definition_node(node: ParsedNode) -> DataflowDefinitionNode {
             .map(|(name, source)| format!("{name}: {source}"))
             .collect(),
         outputs: node.outputs,
+        input_types: node.input_types,
+        output_types: node.output_types,
     }
 }
 

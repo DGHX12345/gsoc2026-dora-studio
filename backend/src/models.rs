@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -301,6 +302,10 @@ pub struct DataflowDefinition {
     pub source: String,
     pub node_count: u32,
     pub edge_count: u32,
+    #[serde(default)]
+    pub project: String,
+    #[serde(default)]
+    pub type_rules: Vec<TypeRuleDef>,
     pub nodes: Vec<DataflowDefinitionNode>,
 }
 
@@ -309,8 +314,14 @@ pub struct DataflowDefinition {
 pub struct DataflowDefinitionNode {
     pub id: String,
     pub path: Option<String>,
+    #[serde(default)]
     pub inputs: Vec<String>,
+    #[serde(default)]
     pub outputs: Vec<String>,
+    #[serde(default)]
+    pub input_types: BTreeMap<String, String>,
+    #[serde(default)]
+    pub output_types: BTreeMap<String, String>,
 }
 
 #[derive(Serialize)]
