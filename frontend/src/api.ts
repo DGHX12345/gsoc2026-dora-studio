@@ -23,13 +23,18 @@ export type DataflowSummaryResponse = {
   status: string
   nodeCount: number
   edgeCount: number
+  project?: string
 }
 
 export type DataflowDefinitionNodeResponse = {
   id: string
-  path: string | null
+  // M18 (Task 4.1): project-loaded dataflows may omit path; per-port URN
+  // types are present when the source YAML declares input/output types.
+  path?: string | null
   inputs: string[]
   outputs: string[]
+  inputTypes?: Record<string, string>
+  outputTypes?: Record<string, string>
 }
 
 export type DataflowDefinitionResponse = {
@@ -40,6 +45,8 @@ export type DataflowDefinitionResponse = {
   nodeCount: number
   edgeCount: number
   nodes: DataflowDefinitionNodeResponse[]
+  project?: string
+  typeRules?: TypeRule[]
 }
 
 export type NodeMetricsResponse = {
@@ -552,7 +559,15 @@ export type SchemaCheckRequest = {
   source_operator: string; source_port: string;
   sink_operator: string; sink_port: string;
 }
-export type SchemaCheckResponse = { compatible: boolean; level: string; detail: string }
+export type SchemaCheckResponse = {
+  compatible: boolean
+  level: string
+  detail: string
+  // M18 (Task 4.1): URN-based /schema/check queries may add these fields.
+  urn?: string
+  rule?: TypeRule | null
+  suggestion?: string
+}
 export type OperatorSchemas = { operator: string; inputs: Array<{ port_name: string; port_type: string; description?: string }>; outputs: Array<{ port_name: string; port_type: string; description?: string }> }
 
 export function checkSchema(req: SchemaCheckRequest) {
@@ -935,4 +950,67 @@ export function postLiveCommand(command: LiveCommandRequest) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(command),
   })
+}
+
+// --- M18 Dataflow Explorer 2.0 ---
+// Note: URNs can contain query params (e.g. `a/b?c`) — when calling the
+// `/types/:urn` wildcard route, always encodeURIComponent(urn) in the URL.
+
+export type TypeField = { name: string; fieldType: string }
+export type TypeParam = { name: string; default?: string }
+export type TypeCatalogEntry = {
+  urn: string; name: string; category: string; arrow: string;
+  description?: string; fields: TypeField[]; params: TypeParam[]
+}
+
+export type ProjectSummaryResponse = {
+  name: string; path: string; builtin: boolean; dataflowCount: number
+  dataflows: DataflowSummaryResponse[]
+}
+
+export type PalettePort = { name: string; urn?: string }
+export type PaletteEntry = {
+  id: string; operator: string; path?: string; runtime: string
+  project: string; manual: boolean; inputs: PalettePort[]; outputs: PalettePort[]
+}
+
+export type ManualNodeSpec = {
+  id: string; path: string; description?: string
+  inputs: PalettePort[]; outputs: PalettePort[]
+}
+
+export type TypeRule = { from: string; to: string }
+
+export type SchemaCheckUrnRequest = {
+  source_urn?: string; sink_urn?: string; type_rules?: TypeRule[]
+}
+// URN-based /schema/check responses reuse SchemaCheckResponse, declared and
+// extended in the schema registry (M02) section above.
+
+export type SaveIssue = { nodeId?: string; portId?: string; message: string }
+export type SaveResponse = { ok: boolean; path: string; warnings: SaveIssue[]; errors: SaveIssue[] }
+
+export function getProjects() {
+  return fetchJson<{ projects: ProjectSummaryResponse[] }>('/projects/list')
+}
+export function addProjectDir(path: string) {
+  return fetchJson<{ ok: boolean }>('/projects/add', { method: 'POST', headers: JSON_HEADER, body: JSON.stringify({ path }) })
+}
+export function deleteProjectDir(path: string) {
+  return fetchJson<{ ok: boolean }>('/projects/delete', { method: 'POST', headers: JSON_HEADER, body: JSON.stringify({ path }) })
+}
+export function submitManualNode(node: ManualNodeSpec) {
+  return fetchJson<{ ok: boolean }>('/projects/nodes', { method: 'POST', headers: JSON_HEADER, body: JSON.stringify(node) })
+}
+export function getTypeCatalog() {
+  return fetchJson<{ types: TypeCatalogEntry[] }>('/types/catalog')
+}
+export function checkSchemaUrn(req: SchemaCheckUrnRequest) {
+  return fetchJson<SchemaCheckResponse>('/schema/check', { method: 'POST', headers: JSON_HEADER, body: JSON.stringify(req) })
+}
+export function saveDataflow(id: string, graph: unknown) {
+  return fetchJson<SaveResponse>(`/dataflows/${encodeURIComponent(id)}/save`, { method: 'POST', headers: JSON_HEADER, body: JSON.stringify({ graph }) })
+}
+export function saveDataflowAs(graph: unknown, targetPath: string) {
+  return fetchJson<SaveResponse>('/dataflows/save-as', { method: 'POST', headers: JSON_HEADER, body: JSON.stringify({ graph, targetPath }) })
 }
