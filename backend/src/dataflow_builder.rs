@@ -19,17 +19,6 @@ pub enum Runtime {
     Cpp,
 }
 
-impl Runtime {
-    pub fn as_str(&self) -> &str {
-        match self {
-            Runtime::Python => "python",
-            Runtime::Rust => "rust",
-            Runtime::C => "c",
-            Runtime::Cpp => "c++",
-        }
-    }
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PortSpec {
     #[serde(rename = "type", skip_serializing_if = "Option::is_none")]
@@ -44,9 +33,15 @@ pub struct NodeSpec {
     pub operator_id: String,
     pub runtime: Runtime,
     #[serde(default)]
+    pub path: Option<String>,
+    #[serde(default)]
     pub inputs: BTreeMap<String, PortSpec>,
     #[serde(default)]
     pub outputs: BTreeMap<String, PortSpec>,
+    #[serde(default)]
+    pub input_types: BTreeMap<String, String>,
+    #[serde(default)]
+    pub output_types: BTreeMap<String, String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub position: Option<Position>,
 }
@@ -66,10 +61,18 @@ pub struct EdgeSpec {
     pub target_port: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TypeRuleDef {
+    pub from: String,
+    pub to: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DataflowGraph {
     pub nodes: Vec<NodeSpec>,
     pub edges: Vec<EdgeSpec>,
+    #[serde(default)]
+    pub type_rules: Vec<TypeRuleDef>,
 }
 
 // ---------------------------------------------------------------------------
@@ -108,6 +111,7 @@ impl std::fmt::Display for BuildError {
 pub struct DataflowBuilder {
     nodes: BTreeMap<String, NodeSpec>,
     edges: BTreeMap<String, EdgeSpec>,
+    pub type_rules: Vec<TypeRuleDef>,
 }
 
 impl DataflowBuilder {
@@ -115,6 +119,7 @@ impl DataflowBuilder {
         Self {
             nodes: BTreeMap::new(),
             edges: BTreeMap::new(),
+            type_rules: Vec::new(),
         }
     }
 
@@ -163,42 +168,22 @@ impl DataflowBuilder {
         DataflowGraph {
             nodes: self.nodes.values().cloned().collect(),
             edges: self.edges.values().cloned().collect(),
+            type_rules: self.type_rules.clone(),
         }
     }
 
-    /// Serialize to dora dataflow YAML format.
+    /// Serialize to dora 1.0 dataflow YAML (nodes: header, node-level
+    /// input_types/output_types, dataflow-level type_rules).
     pub fn to_yaml(&self) -> String {
-        let mut out = String::new();
+        let mut out = String::from("nodes:\n");
         for node in self.nodes.values() {
-            out.push_str(&format!(
-                "  - id: {}\n    operator: {}\n    runtime: {}\n",
-                node.id,
-                node.operator_id,
-                node.runtime.as_str()
-            ));
-            if !node.inputs.is_empty() {
-                out.push_str("    inputs:\n");
-                for (name, port) in &node.inputs {
-                    out.push_str(&format!("      {}:\n", name));
-                    if let Some(ref t) = port.port_type {
-                        out.push_str(&format!("        type: {}\n", t));
-                    }
-                    out.push_str(&format!(
-                        "        source: {}\n",
-                        find_edge_source(&self.edges, &node.id, name)
-                    ));
-                }
+            out.push_str(&render_node_block(node, &self.edges));
+        }
+        if !self.type_rules.is_empty() {
+            out.push_str("type_rules:\n");
+            for rule in &self.type_rules {
+                out.push_str(&format!("  - from: {}\n    to: {}\n", rule.from, rule.to));
             }
-            if !node.outputs.is_empty() {
-                out.push_str("    outputs:\n");
-                for (name, port) in &node.outputs {
-                    out.push_str(&format!("      - {}\n", name));
-                    if let Some(ref t) = port.port_type {
-                        out.push_str(&format!("        type: {}\n", t));
-                    }
-                }
-            }
-            out.push('\n');
         }
         out
     }
@@ -206,6 +191,7 @@ impl DataflowBuilder {
     /// Parse from dora dataflow YAML using a minimal line-based parser.
     pub fn from_yaml(yaml: &str) -> Result<Self, BuildError> {
         let mut builder = Self::new();
+        let type_rules = parse_type_rules_from_yaml(yaml);
         let lines: Vec<&str> = yaml.lines().collect();
         let mut i = 0;
 
@@ -241,8 +227,11 @@ impl DataflowBuilder {
                     .to_string();
                 let mut operator_id = String::new();
                 let mut runtime = Runtime::Python;
+                let mut node_path: Option<String> = None;
                 let mut inputs = BTreeMap::new();
                 let mut outputs = BTreeMap::new();
+                let mut input_types = BTreeMap::new();
+                let mut output_types = BTreeMap::new();
 
                 i += 1;
                 // Parse node fields
@@ -272,6 +261,48 @@ impl DataflowBuilder {
                                 "c++" | "cpp" => Runtime::Cpp,
                                 _ => Runtime::Python,
                             };
+                        } else if let Some(path) = inner_trimmed.strip_prefix("path:") {
+                            node_path = Some(path.trim().to_string());
+                        } else if inner_trimmed == "input_types:" {
+                            i += 1;
+                            while i < lines.len() {
+                                let t_line = lines[i];
+                                let t_trimmed = t_line.trim_start();
+                                let t_indent = t_line.len() - t_trimmed.len();
+                                if t_indent <= 4 {
+                                    break;
+                                }
+                                if t_indent == 6 {
+                                    if let Some((name, urn)) = t_trimmed.split_once(':') {
+                                        input_types.insert(
+                                            name.trim().to_string(),
+                                            urn.trim().to_string(),
+                                        );
+                                    }
+                                }
+                                i += 1;
+                            }
+                            continue;
+                        } else if inner_trimmed == "output_types:" {
+                            i += 1;
+                            while i < lines.len() {
+                                let t_line = lines[i];
+                                let t_trimmed = t_line.trim_start();
+                                let t_indent = t_line.len() - t_trimmed.len();
+                                if t_indent <= 4 {
+                                    break;
+                                }
+                                if t_indent == 6 {
+                                    if let Some((name, urn)) = t_trimmed.split_once(':') {
+                                        output_types.insert(
+                                            name.trim().to_string(),
+                                            urn.trim().to_string(),
+                                        );
+                                    }
+                                }
+                                i += 1;
+                            }
+                            continue;
                         } else if inner_trimmed == "inputs:" {
                             i += 1;
                             // Parse inputs
@@ -348,8 +379,11 @@ impl DataflowBuilder {
                     id,
                     operator_id,
                     runtime,
+                    path: node_path,
                     inputs,
                     outputs,
+                    input_types,
+                    output_types,
                     position: None,
                 })?;
             } else {
@@ -376,6 +410,27 @@ impl DataflowBuilder {
                 }
             }
         }
+
+        // Backfill PortSpec.port_type from the input_types/output_types maps
+        // so the canvas round-trips types on the ports themselves.
+        for node in builder.nodes.values_mut() {
+            for (name, urn) in &node.input_types {
+                if let Some(port) = node.inputs.get_mut(name) {
+                    if port.port_type.is_none() {
+                        port.port_type = Some(urn.clone());
+                    }
+                }
+            }
+            for (name, urn) in &node.output_types {
+                if let Some(port) = node.outputs.get_mut(name) {
+                    if port.port_type.is_none() {
+                        port.port_type = Some(urn.clone());
+                    }
+                }
+            }
+        }
+
+        builder.type_rules = type_rules;
 
         Ok(builder)
     }
@@ -420,6 +475,102 @@ impl Default for DataflowBuilder {
 // Helpers
 // ---------------------------------------------------------------------------
 
+/// Render one node block (without the surrounding "nodes:" header) in dora
+/// 1.0 format: id, optional path, inputs with sources, node-level
+/// input_types/output_types. Node-level `runtime` is NOT emitted: dora 1.0
+/// removed it from the node schema (the runtime is implied by the path's
+/// language), so it is canvas-side state only.
+fn render_node_block(node: &NodeSpec, edges: &BTreeMap<String, EdgeSpec>) -> String {
+    let mut out = String::new();
+    out.push_str(&format!("  - id: {}\n", node.id));
+    if let Some(ref path) = node.path {
+        out.push_str(&format!("    path: {}\n", path));
+    }
+    if !node.inputs.is_empty() {
+        out.push_str("    inputs:\n");
+        for (name, _) in &node.inputs {
+            out.push_str(&format!("      {}:\n", name));
+            out.push_str(&format!(
+                "        source: {}\n",
+                find_edge_source(edges, &node.id, name)
+            ));
+        }
+    }
+    let input_types: BTreeMap<&String, &String> = node
+        .input_types
+        .iter()
+        .chain(
+            node.inputs
+                .iter()
+                .filter_map(|(name, port)| port.port_type.as_ref().map(|t| (name, t))),
+        )
+        .collect();
+    if !input_types.is_empty() {
+        out.push_str("    input_types:\n");
+        for (name, urn) in &input_types {
+            out.push_str(&format!("      {name}: {urn}\n"));
+        }
+    }
+    if !node.outputs.is_empty() {
+        out.push_str("    outputs:\n");
+        for name in node.outputs.keys() {
+            out.push_str(&format!("      - {}\n", name));
+        }
+    }
+    let output_types: BTreeMap<&String, &String> = node
+        .output_types
+        .iter()
+        .chain(
+            node.outputs
+                .iter()
+                .filter_map(|(name, port)| port.port_type.as_ref().map(|t| (name, t))),
+        )
+        .collect();
+    if !output_types.is_empty() {
+        out.push_str("    output_types:\n");
+        for (name, urn) in &output_types {
+            out.push_str(&format!("      {name}: {urn}\n"));
+        }
+    }
+    out.push('\n');
+    out
+}
+
+/// Parse the dataflow-level "type_rules:" section (indent 0) into
+/// (from, to) pairs. Ignores any other sections.
+fn parse_type_rules_from_yaml(yaml: &str) -> Vec<TypeRuleDef> {
+    let mut rules = Vec::new();
+    let mut in_rules = false;
+    let mut current_from: Option<String> = None;
+    for raw_line in yaml.lines() {
+        let trimmed = raw_line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        let indent = raw_line.chars().take_while(|ch| ch.is_whitespace()).count();
+        if !in_rules {
+            if trimmed == "type_rules:" && indent == 0 {
+                in_rules = true;
+            }
+            continue;
+        }
+        if indent == 0 && trimmed != "type_rules:" {
+            break;
+        }
+        if let Some(from) = trimmed.strip_prefix("- from:") {
+            current_from = Some(from.trim().to_string());
+        } else if let Some(to) = trimmed.strip_prefix("to:") {
+            if let Some(from) = current_from.take() {
+                rules.push(TypeRuleDef {
+                    from,
+                    to: to.trim().to_string(),
+                });
+            }
+        }
+    }
+    rules
+}
+
 fn find_edge_source(
     edges: &BTreeMap<String, EdgeSpec>,
     target_node: &str,
@@ -443,8 +594,11 @@ fn find_yaml_source(yaml: &str, node: &str, port: &str) -> Option<(String, Strin
         let trimmed = line.trim_start();
         let indent = line.len() - trimmed.len();
 
-        // Detect node by "id: <node>"
-        if indent == 4 && trimmed == format!("id: {}", node) {
+        // Detect node by "id: <node>": both the plain form at indent 4 and
+        // the list item "  - id: <node>" at indent 2 emitted by to_yaml.
+        if (indent == 4 && trimmed == format!("id: {}", node))
+            || (indent <= 2 && trimmed == format!("- id: {}", node))
+        {
             in_target_node = true;
             continue;
         }
@@ -491,7 +645,9 @@ mod tests {
             id: "camera".into(),
             operator_id: "camera_driver".into(),
             runtime: Runtime::Python,
+            path: None,
             inputs: BTreeMap::new(),
+            input_types: BTreeMap::new(),
             outputs: {
                 let mut m = BTreeMap::new();
                 m.insert(
@@ -503,6 +659,7 @@ mod tests {
                 );
                 m
             },
+            output_types: BTreeMap::new(),
             position: Some(Position { x: 100.0, y: 100.0 }),
         })
         .unwrap();
@@ -510,6 +667,7 @@ mod tests {
             id: "detector".into(),
             operator_id: "object_detection".into(),
             runtime: Runtime::Python,
+            path: None,
             inputs: {
                 let mut m = BTreeMap::new();
                 m.insert(
@@ -521,6 +679,7 @@ mod tests {
                 );
                 m
             },
+            input_types: BTreeMap::new(),
             outputs: {
                 let mut m = BTreeMap::new();
                 m.insert(
@@ -532,6 +691,7 @@ mod tests {
                 );
                 m
             },
+            output_types: BTreeMap::new(),
             position: Some(Position { x: 300.0, y: 100.0 }),
         })
         .unwrap();
@@ -550,10 +710,12 @@ mod tests {
     fn builds_valid_yaml() {
         let b = make_test_graph();
         let yaml = b.to_yaml();
+        assert!(yaml.starts_with("nodes:\n"));
         assert!(yaml.contains("id: camera"));
-        assert!(yaml.contains("operator: camera_driver"));
-        assert!(yaml.contains("operator: object_detection"));
-        assert!(yaml.contains("runtime: python"));
+        assert!(yaml.contains("output_types:"));
+        assert!(yaml.contains("source: camera/image"));
+        // dora 1.0 node schema has no node-level `runtime` field.
+        assert!(!yaml.contains("runtime:"));
     }
 
     #[test]
@@ -563,8 +725,11 @@ mod tests {
             id: "a".into(),
             operator_id: "op".into(),
             runtime: Runtime::Python,
+            path: None,
             inputs: BTreeMap::new(),
             outputs: BTreeMap::new(),
+            input_types: BTreeMap::new(),
+            output_types: BTreeMap::new(),
             position: None,
         })
         .unwrap();
@@ -572,8 +737,11 @@ mod tests {
             id: "a".into(),
             operator_id: "op2".into(),
             runtime: Runtime::Python,
+            path: None,
             inputs: BTreeMap::new(),
             outputs: BTreeMap::new(),
+            input_types: BTreeMap::new(),
+            output_types: BTreeMap::new(),
             position: None,
         });
         assert!(result.is_err());
@@ -586,8 +754,11 @@ mod tests {
             id: "a".into(),
             operator_id: "op".into(),
             runtime: Runtime::Python,
+            path: None,
             inputs: BTreeMap::new(),
             outputs: BTreeMap::new(),
+            input_types: BTreeMap::new(),
+            output_types: BTreeMap::new(),
             position: None,
         })
         .unwrap();
@@ -608,8 +779,11 @@ mod tests {
             id: "lonely".into(),
             operator_id: "op".into(),
             runtime: Runtime::Python,
+            path: None,
             inputs: BTreeMap::new(),
             outputs: BTreeMap::new(),
+            input_types: BTreeMap::new(),
+            output_types: BTreeMap::new(),
             position: None,
         })
         .unwrap();
@@ -631,5 +805,60 @@ mod tests {
         let graph = b.graph();
         assert_eq!(graph.nodes.len(), 2);
         assert_eq!(graph.edges.len(), 1);
+    }
+
+    #[test]
+    fn yaml_includes_nodes_header_and_types() {
+        let b = make_test_graph();
+        let yaml = b.to_yaml();
+        assert!(
+            yaml.starts_with("nodes:\n"),
+            "dora 1.0 requires nodes: header"
+        );
+        // old `type:` under ports is migrated to node-level maps
+        assert!(yaml.contains("output_types:\n      image: image"));
+        assert!(!yaml.contains("        type: image"));
+    }
+
+    #[test]
+    fn type_rules_roundtrip_in_yaml() {
+        let mut b = make_test_graph();
+        b.type_rules.push(TypeRuleDef {
+            from: "std/core/v1/UInt8".into(),
+            to: "std/core/v1/String".into(),
+        });
+        let yaml = b.to_yaml();
+        assert!(yaml.contains("type_rules:"));
+        assert!(yaml.contains("  - from: std/core/v1/UInt8"));
+        assert!(yaml.contains("    to: std/core/v1/String"));
+        let parsed = DataflowBuilder::from_yaml(&yaml).expect("roundtrip");
+        assert_eq!(
+            parsed.type_rules,
+            vec![TypeRuleDef {
+                from: "std/core/v1/UInt8".into(),
+                to: "std/core/v1/String".into()
+            }]
+        );
+    }
+
+    #[test]
+    fn path_field_roundtrips() {
+        let mut b = DataflowBuilder::new();
+        b.add_node(NodeSpec {
+            id: "a".into(),
+            operator_id: "a".into(),
+            runtime: Runtime::Python,
+            path: Some("cam.py".into()),
+            inputs: BTreeMap::new(),
+            outputs: BTreeMap::new(),
+            input_types: BTreeMap::new(),
+            output_types: BTreeMap::new(),
+            position: None,
+        })
+        .unwrap();
+        let yaml = b.to_yaml();
+        assert!(yaml.contains("    path: cam.py"));
+        let parsed = DataflowBuilder::from_yaml(&yaml).expect("roundtrip");
+        assert_eq!(parsed.graph().nodes[0].path.as_deref(), Some("cam.py"));
     }
 }
