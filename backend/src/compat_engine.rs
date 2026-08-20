@@ -3,7 +3,7 @@
 //! Mirrors dora-core `types.rs` CompatibilityGraph + schema_compatible:
 //! same-base URN (param agreement), 4 builtin widening edges, universal
 //! `* -> Bytes` sink, user type_rules with BFS depth <= 3, and structural
-//! struct compatibility (actual fields superset of expected).
+//! struct compatibility (planned in Task 3.2).
 
 use std::collections::{BTreeMap, VecDeque};
 
@@ -14,30 +14,39 @@ pub struct ParsedUrn {
 }
 
 pub fn parse_urn(urn: &str) -> Option<ParsedUrn> {
-    let (base, params) = match urn.split_once('[') {
-        None => (urn.trim(), ""),
-        Some((base, rest)) => {
-            let params = rest.strip_suffix(']')?.trim();
-            if params.is_empty() {
-                return None;
-            }
-            (base.trim(), params)
-        }
+    if urn.is_empty() {
+        return None;
+    }
+    let Some((base, rest)) = urn.split_once('[') else {
+        // Mirror dora types.rs: bracketless base kept verbatim (no trim).
+        return Some(ParsedUrn {
+            base: urn.to_string(),
+            params: BTreeMap::new(),
+        });
     };
+    // Has '[' but no closing ']' -> malformed (mirrors dora's ends_with check).
+    let params = rest.strip_suffix(']')?;
+    if params.is_empty() {
+        return None; // empty brackets
+    }
+    // NOTE: dora accepts "[a=b]" as base ""; we intentionally reject an
+    // empty base (stricter, fail-safe direction). Identical malformed
+    // strings on both ports still compare equal via the raw-string
+    // fallback in check().
     if base.is_empty() {
         return None;
     }
     let mut map = BTreeMap::new();
-    if !params.is_empty() {
-        for pair in params.split(',') {
-            let (key, value) = pair.split_once('=')?;
-            let key = key.trim();
-            let value = value.trim();
-            if key.is_empty() || value.is_empty() {
-                return None;
-            }
-            map.insert(key.to_string(), value.to_string());
+    for pair in params.split(',') {
+        // Mirror dora types.rs: params trimmed per part/key/value (base is not).
+        let pair = pair.trim();
+        let (key, value) = pair.split_once('=')?;
+        let key = key.trim();
+        let value = value.trim();
+        if key.is_empty() || value.is_empty() {
+            return None;
         }
+        map.insert(key.to_string(), value.to_string());
     }
     Some(ParsedUrn {
         base: base.to_string(),
@@ -124,7 +133,9 @@ pub fn check(
             compatible: false,
             level: "incompatible".into(),
             reason: format!("Parameterized type mismatch between {from} and {to}."),
-            suggestion: None,
+            suggestion: Some(
+                "Align the type parameters on both ports, or use a conversion node.".to_string(),
+            ),
             rule: None,
         };
     }
@@ -283,6 +294,19 @@ mod tests {
         assert!(!result.compatible);
     }
 
+    // 对齐 dora types.rs compat_depth_limit: 3 跳用户链在深度限制内 → 兼容
+    #[test]
+    fn user_rule_chain_within_depth_3_is_compatible() {
+        let chain = rules(&[
+            ("a/b/v1/T0", "a/b/v1/T1"),
+            ("a/b/v1/T1", "a/b/v1/T2"),
+            ("a/b/v1/T2", "a/b/v1/T3"),
+        ]);
+        let result = check(Some("a/b/v1/T0"), Some("a/b/v1/T3"), &chain);
+        assert!(result.compatible);
+        assert_eq!(result.level, "rule");
+    }
+
     // 不相关类型不兼容
     #[test]
     fn unrelated_types_incompatible_with_reason() {
@@ -306,5 +330,12 @@ mod tests {
         assert!(parse_urn("std/media/v1/AudioFrame[").is_none());
         assert!(parse_urn("std/media/v1/AudioFrame[]").is_none());
         assert!(parse_urn("std/media/v1/AudioFrame").is_some());
+    }
+
+    // 对齐 dora: base 不做 trim（尾部空格与 dora 行为一致 → 不兼容）
+    #[test]
+    fn padded_urn_matches_dora_behavior() {
+        let result = check(Some("std/core/v1/UInt32"), Some("std/core/v1/UInt32 "), &[]);
+        assert!(!result.compatible);
     }
 }
