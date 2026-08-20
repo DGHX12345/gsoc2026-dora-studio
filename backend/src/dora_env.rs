@@ -506,6 +506,7 @@ mod tests {
     fn empty_binary_uses_path_name() {
         let _guard = ENV_LOCK.lock().unwrap();
         let settings = SettingsEnvGuard::with_clean_dir("dora-settings-empty-bin");
+        super::reset_settings_state_for_tests();
         let _env = DoraBinEnvGuard::set("");
         assert_eq!(resolve_dora_bin(), "dora");
         drop(settings);
@@ -515,6 +516,7 @@ mod tests {
     fn missing_binary_uses_path_name() {
         let _guard = ENV_LOCK.lock().unwrap();
         let settings = SettingsEnvGuard::with_clean_dir("dora-settings-missing-bin");
+        super::reset_settings_state_for_tests();
         let _env = DoraBinEnvGuard::remove();
         assert_eq!(resolve_dora_bin(), "dora");
         drop(settings);
@@ -686,6 +688,7 @@ mod tests {
         let _lock = ENV_LOCK.lock().unwrap();
         let custom = std::env::temp_dir().join("custom-settings.json");
         let _settings = SettingsEnvGuard::set(&custom);
+        super::reset_settings_state_for_tests();
         assert_eq!(super::settings_path(), custom);
     }
 
@@ -693,6 +696,7 @@ mod tests {
     fn resolve_prefers_env_over_settings_over_path() {
         let _lock = ENV_LOCK.lock().unwrap();
         let guard = SettingsEnvGuard::with_clean_dir("dora-settings-resolve");
+        super::reset_settings_state_for_tests();
         let settings_file = guard.dir.join("settings.json");
         fs::write(
             &settings_file,
@@ -717,6 +721,7 @@ mod tests {
     fn missing_settings_seeds_candidates() {
         let _lock = ENV_LOCK.lock().unwrap();
         let guard = SettingsEnvGuard::with_clean_dir("dora-settings-seed");
+        super::reset_settings_state_for_tests();
         let home = guard.dir.join("home");
         let venv10 = home.join(".venvs/dora10/bin/dora");
         let venv05 = home.join(".venvs/dora05/bin/dora");
@@ -777,6 +782,7 @@ mod tests {
         let v05 = version_script("0.5.0");
         let _scripts = TempScriptsGuard::new([v10.clone(), v05.clone()]);
         let guard = SettingsEnvGuard::with_clean_dir("dora-settings-detect");
+        super::reset_settings_state_for_tests();
         let settings_file = guard.dir.join("settings.json");
         fs::write(
             &settings_file,
@@ -816,6 +822,7 @@ mod tests {
         let v05 = version_script("0.5.0");
         let _scripts = TempScriptsGuard::new([v10.clone(), v05.clone()]);
         let guard = SettingsEnvGuard::with_clean_dir("dora-settings-switch");
+        super::reset_settings_state_for_tests();
         let settings_file = guard.dir.join("settings.json");
         fs::write(
             &settings_file,
@@ -850,6 +857,7 @@ mod tests {
     fn add_and_delete_candidates_persist() {
         let _lock = ENV_LOCK.lock().unwrap();
         let guard = SettingsEnvGuard::with_clean_dir("dora-settings-candidates");
+        super::reset_settings_state_for_tests();
         let extra = guard.dir.join("extra-dora");
         fs::write(&extra, "#!/bin/sh\n").unwrap();
         let active = guard.dir.join("active-dora");
