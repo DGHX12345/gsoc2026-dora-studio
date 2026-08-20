@@ -993,6 +993,9 @@ export type SaveResponse = { ok: boolean; path: string; warnings: SaveIssue[]; e
 export function getProjects() {
   return fetchJson<{ projects: ProjectSummaryResponse[] }>('/projects/list')
 }
+export function getPalette() {
+  return fetchJson<{ entries: PaletteEntry[] }>('/palette')
+}
 export function addProjectDir(path: string) {
   return fetchJson<{ ok: boolean }>('/projects/add', { method: 'POST', headers: JSON_HEADER, body: JSON.stringify({ path }) })
 }

@@ -8,22 +8,33 @@
 
       <div v-if="apiError" class="empty-state">{{ apiError }}</div>
 
-      <div v-else-if="dataflows.length === 0" class="empty-state">
+      <div v-else-if="projects.length === 0" class="empty-state">
         No dataflow YAML files found under examples/.
       </div>
 
-      <button
-        v-for="flow in dataflows"
-        :key="flow.id"
-        :class="['flow-file', { active: selectedDataflowId === flow.id }]"
-        @click="selectDataflow(flow.id)"
-      >
-        <span class="flow-name-row">
-          <strong>{{ flow.name }}</strong>
-          <span :class="['status-chip', flow.status]">{{ flow.status }}</span>
-        </span>
-        <small>{{ flow.nodeCount }} nodes &middot; {{ flow.edgeCount }} edges</small>
+      <button class="sidebar-add-project" @click="addProject" title="Scan an additional project directory for dataflows and nodes">
+        ＋ Add project directory
       </button>
+
+      <div v-for="project in projects" :key="project.path" class="project-group">
+        <div class="project-group-header">
+          <span class="project-group-name">{{ project.name }}</span>
+          <span v-if="project.builtin" class="project-group-builtin">builtin</span>
+          <span class="project-group-count">{{ project.dataflows.length }}</span>
+        </div>
+        <button
+          v-for="flow in project.dataflows"
+          :key="flow.id"
+          :class="['flow-file', { active: selectedDataflowId === flow.id }]"
+          @click="selectDataflow(flow.id)"
+        >
+          <span class="flow-name-row">
+            <strong>{{ flow.name }}</strong>
+            <span :class="['status-chip', flow.status]">{{ flow.status }}</span>
+          </span>
+          <small>{{ flow.nodeCount }} nodes &middot; {{ flow.edgeCount }} edges</small>
+        </button>
+      </div>
 
       <details class="diagnostics-box collapsible" open>
         <summary><h3>File Info</h3></summary>
@@ -39,14 +50,18 @@
             <button :class="['view-tab', { active: viewMode === 'source' }]" @click="viewMode = 'source'">Source</button>
             <button :class="['view-tab', { active: viewMode === 'build' }]" @click="viewMode = 'build'">Build</button>
           </div>
+          <div v-if="viewMode === 'source'" class="view-tabs source-subtabs">
+            <button :class="['view-tab', { active: sourceSubView === 'canvas' }]" @click="sourceSubView = 'canvas'">Canvas</button>
+            <button :class="['view-tab', { active: sourceSubView === 'text' }]" @click="sourceSubView = 'text'">Text</button>
+          </div>
           <p v-if="viewMode === 'source'">Raw YAML from {{ definition?.relativePath ?? 'dataflow descriptor' }}</p>
           <p v-else>Build dataflows visually — drag nodes, connect ports, generate YAML</p>
         </div>
         <span class="pill">{{ definition?.source?.split('\n').length ?? 0 }} lines</span>
       </div>
 
-<div v-if="viewMode === 'build'" class="build-layout">
-        <NodePalette :entries="[]" @drag-start="onPaletteDrag" />
+      <div v-if="viewMode === 'build'" class="build-layout">
+        <NodePalette :entries="paletteEntries" @drag-start="onPaletteDrag" @add-manual="addManualNode" />
         <div class="build-canvas-wrap">
           <div class="build-toolbar">
             <button class="build-tb-btn" @click="buildYaml" title="Generate YAML">Generate YAML</button>
@@ -86,9 +101,55 @@
         </div>
       </div>
 
-      <div v-else class="source-viewer">
-        <pre><code>{{ definition?.source ?? 'No source available.' }}</code></pre>
-      </div>
+      <template v-else-if="viewMode === 'source'">
+        <div v-if="sourceSubView === 'canvas' && definition" class="build-layout">
+          <NodePalette :entries="paletteEntries" @drag-start="onPaletteDrag" @add-manual="addManualNode" />
+          <div class="build-canvas-wrap">
+            <div class="build-toolbar">
+              <button class="build-tb-btn" @click="saveCurrent" title="Write canvas edits back to the dataflow YAML">Save</button>
+              <button class="build-tb-btn secondary" @click="saveAsCurrent" title="Generate a new dataflow YAML at an absolute path">Save As</button>
+              <span class="build-tb-sep"></span>
+              <span class="build-tb-status">{{ saveStatus || 'Canvas edits are saved back to the YAML' }}</span>
+            </div>
+            <DataflowCanvas
+              :graph="buildGraph"
+              :selected-node="selectedBuildNode"
+              :selected-edge="selectedBuildEdge"
+              :edge-styles="edgeStyles"
+              :dataflow-id="runState === 'running' ? 'studio-dataflow' : undefined"
+              @update:graph="onBuildGraphUpdate"
+              @select-node="selectedBuildNode = $event"
+              @select-edge="selectedBuildEdge = $event"
+            />
+            <div class="build-statusbar">
+              <span>{{ buildGraph.nodes.length }} nodes</span>
+              <span>{{ buildGraph.edges.length }} edges</span>
+              <span class="build-zoom">Click + drag to pan &middot; Scroll to zoom</span>
+            </div>
+          </div>
+          <aside class="source-side-panel">
+            <div v-if="selectedBuildEdge && edgeStyles[selectedBuildEdge]" class="edge-props">
+              <div class="edge-props-header">Connection</div>
+              <div class="edge-props-reason">{{ edgeStyles[selectedBuildEdge].tooltip }}</div>
+              <button
+                v-if="edgeStyles[selectedBuildEdge].color === 'var(--accent-red)'"
+                class="edge-props-btn"
+                @click="createRuleForSelectedEdge"
+              >Declare type rule for this connection</button>
+            </div>
+            <PortTypePanel :node="portPanelNode" @update-port="onPortUpdate" />
+            <TypeRulesPanel :rules="typeRules" @update:rules="onTypeRulesUpdate" />
+          </aside>
+        </div>
+        <div v-else class="source-fallback">
+          <div v-if="selectedDataflowId && !definition" class="parse-note">
+            This YAML could not be parsed — canvas editing disabled
+          </div>
+          <div class="source-viewer">
+            <pre><code>{{ definition?.source ?? 'No source available.' }}</code></pre>
+          </div>
+        </div>
+      </template>
     </article>
 
   </section>
@@ -98,28 +159,49 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import {
   getDataflowDefinition,
-  getDataflows,
+  getProjects,
+  getPalette,
+  addProjectDir,
+  submitManualNode,
   buildDataflow,
   validateDataflow,
   checkSchema,
+  checkSchemaUrn,
+  saveDataflow,
+  saveDataflowAs,
   runDataflow,
   stopRuntime,
-  getRuntimeStatus,
   type ApiSource,
   type DataflowDefinitionResponse,
-  type DataflowSummaryResponse,
   type DataflowGraph,
+  type ProjectSummaryResponse,
+  type PaletteEntry,
+  type PalettePort,
+  type ManualNodeSpec,
+  type TypeRule,
+  type SaveIssue,
+  type SaveResponse,
 } from '../api'
 import DataflowCanvas from './DataflowCanvas.vue'
 import NodePalette from './NodePalette.vue'
+import PortTypePanel from './PortTypePanel.vue'
+import TypeRulesPanel from './TypeRulesPanel.vue'
+import { definitionToGraph, graphToPayload } from '../dataflow-convert'
+import { edgeLevel, edgeColor, buildRulePatch } from '../edge-status'
 import type { DataflowGraph as CanvasGraph } from './DataflowCanvas.vue'
 
-const emptyDataflows: DataflowSummaryResponse[] = []
 const emptyDefinition: DataflowDefinitionResponse = {
   id: '', name: '', relativePath: '', source: '', nodeCount: 0, edgeCount: 0, nodes: [],
 }
 
-const dataflows = ref<DataflowSummaryResponse[]>([])
+const projects = ref<ProjectSummaryResponse[]>([])
+const paletteEntries = ref<PaletteEntry[]>([])
+const typeRules = ref<TypeRule[]>([])
+const editingDefinition = ref<DataflowDefinitionResponse | null>(null)
+const sourceSubView = ref<'canvas' | 'text'>('canvas')
+const saveStatus = ref('')
+const edgeStatuses = ref<Record<string, string>>({})
+
 const definition = ref<DataflowDefinitionResponse | null>(null)
 const selectedDataflowId = ref('')
 const viewMode = ref<'source' | 'build'>('build')
@@ -127,7 +209,7 @@ const apiSource = ref<ApiSource>('fallback')
 const apiError = ref('')
 const apiSourceText = computed(() => (apiSource.value === 'connected' ? 'API connected' : 'Backend unavailable'))
 
-// --- Build mode state ---
+// --- Canvas graph state (shared by Build mode and the Source canvas editor) ---
 const buildGraph = ref<CanvasGraph>({ nodes: [], edges: [] })
 const selectedBuildNode = ref<string | null>(null)
 const selectedBuildEdge = ref<string | null>(null)
@@ -135,16 +217,98 @@ const buildStatus = ref('New graph')
 const buildValid = ref(false)
 const buildChecked = ref(false)
 const generatedYaml = ref('')
+const builtYaml = ref('')
+const runState = ref<'running' | 'stopped' | 'failed'>('stopped')
 
-function onPaletteDrag(_entry: unknown) { /* visual feedback handled by browser */ }
+const portPanelNode = computed(() => buildGraph.value.nodes.find(n => n.id === selectedBuildNode.value) ?? null)
+
+function onPaletteDrag(_entry: PaletteEntry) { /* visual feedback handled by browser */ }
 
 function onBuildGraphUpdate(graph: CanvasGraph) {
   buildGraph.value = graph
   buildChecked.value = false
 }
 
-const builtYaml = ref('')
-const runState = ref<'running' | 'stopped' | 'failed'>('stopped')
+// --- Sidebar: projects + palette loading ---
+
+async function loadProjects() {
+  try {
+    const result = await getProjects()
+    projects.value = result.projects
+    apiSource.value = 'connected'
+    apiError.value = ''
+  } catch (e) {
+    projects.value = []
+    apiSource.value = 'fallback'
+    apiError.value = e instanceof Error ? e.message : 'Backend API is unavailable.'
+  }
+}
+
+async function loadPalette() {
+  try {
+    const result = await getPalette()
+    paletteEntries.value = result.entries
+  } catch {
+    paletteEntries.value = []
+  }
+}
+
+async function addProject() {
+  const path = window.prompt('Project directory path:')
+  if (!path) return
+  try {
+    await addProjectDir(path)
+    await loadProjects()
+  } catch (e) {
+    window.alert(e instanceof Error ? e.message : 'Failed to add project directory')
+  }
+}
+
+async function addManualNode() {
+  const id = window.prompt('Node id:')
+  if (!id) return
+  const path = window.prompt('Node path (e.g. nodes/camera.py):')
+  if (!path) return
+  const inputsText = window.prompt('Inputs (comma-separated "name=urn, name=urn"):') ?? ''
+  const outputsText = window.prompt('Outputs (comma-separated "name=urn, name=urn"):') ?? ''
+  const parsePorts = (text: string): PalettePort[] => text
+    .split(',')
+    .map(part => part.trim())
+    .filter(Boolean)
+    .map(part => {
+      const [name, urn] = part.split('=')
+      return urn ? { name: name.trim(), urn: urn.trim() } : { name: part.trim() }
+    })
+  const spec: ManualNodeSpec = { id, path, inputs: parsePorts(inputsText), outputs: parsePorts(outputsText) }
+  try {
+    await submitManualNode(spec)
+    await loadPalette()
+  } catch (e) {
+    window.alert(e instanceof Error ? e.message : 'Failed to add node')
+  }
+}
+
+// --- Dataflow loading ---
+
+async function loadDataflow(id: string) {
+  selectedDataflowId.value = id
+  saveStatus.value = ''
+  const result = await getDataflowDefinition(id, emptyDefinition)
+  definition.value = result.source === 'connected' ? result.data : null
+  if (definition.value) {
+    editingDefinition.value = definition.value
+    buildGraph.value = definitionToGraph(definition.value)
+    typeRules.value = definition.value.typeRules ?? []
+    sourceSubView.value = 'canvas'
+    await checkAllEdges()
+  }
+}
+
+async function selectDataflow(id: string) {
+  await loadDataflow(id)
+}
+
+// --- Build mode actions (unchanged) ---
 
 async function buildYaml() {
   const g: DataflowGraph = {
@@ -216,7 +380,15 @@ async function validateBuild() {
   }
 }
 
-// --- Schema checking ---
+function clearBuild() {
+  buildGraph.value = { nodes: [], edges: [] }
+  selectedBuildNode.value = null; selectedBuildEdge.value = null
+  buildStatus.value = 'New graph'; buildValid.value = false; buildChecked.value = false
+  generatedYaml.value = ''
+}
+
+// --- Edge schema checking (URN-first with old-shape fallback) ---
+
 const edgeStyles = ref<Record<string, { color: string; tooltip: string }>>({})
 const schemaChecking = ref(false)
 
@@ -227,15 +399,17 @@ async function checkAllEdges() {
     const srcNode = buildGraph.value.nodes.find(n => n.id === edge.sourceNode)
     const tgtNode = buildGraph.value.nodes.find(n => n.id === edge.targetNode)
     if (!srcNode || !tgtNode) continue
+    const srcUrn = srcNode.outputs[edge.sourcePort]?.type
+    const tgtUrn = tgtNode.inputs[edge.targetPort]?.type
     try {
-      const resp = await checkSchema({
-        source_operator: srcNode.operatorId, source_port: edge.sourcePort,
-        sink_operator: tgtNode.operatorId, sink_port: edge.targetPort,
-      })
-      styles[edge.id] = {
-        color: resp.level === 'incompatible' ? 'var(--accent-red)' : resp.level === 'warning' ? 'var(--accent-yellow)' : resp.level === 'unknown' ? 'var(--text-muted-dark)' : 'var(--accent-green)',
-        tooltip: resp.detail,
-      }
+      const resp = srcUrn || tgtUrn
+        ? await checkSchemaUrn({ source_urn: srcUrn, sink_urn: tgtUrn, type_rules: typeRules.value })
+        : await checkSchema({
+            source_operator: srcNode.operatorId, source_port: edge.sourcePort,
+            sink_operator: tgtNode.operatorId, sink_port: edge.targetPort,
+          })
+      const level = edgeLevel(resp)
+      styles[edge.id] = { color: edgeColor(level), tooltip: resp.detail + (resp.suggestion ? ` — ${resp.suggestion}` : '') }
     } catch {
       styles[edge.id] = { color: 'var(--text-muted-dark)', tooltip: 'Schema check unavailable' }
     }
@@ -244,35 +418,100 @@ async function checkAllEdges() {
   schemaChecking.value = false
 }
 
-// Re-check schema when edges change
+// Re-check schema when edges change, and when type rules change.
 watch(() => buildGraph.value.edges.length, () => { checkAllEdges() })
+watch(() => typeRules.value, () => { checkAllEdges() })
 
-function clearBuild() {
-  buildGraph.value = { nodes: [], edges: [] }
-  selectedBuildNode.value = null; selectedBuildEdge.value = null
-  buildStatus.value = 'New graph'; buildValid.value = false; buildChecked.value = false
-  generatedYaml.value = ''
+// --- Source editor: save write-back ---
+
+async function saveCurrent() {
+  if (!editingDefinition.value) return
+  saveStatus.value = 'Saving...'
+  try {
+    const result = await saveDataflow(editingDefinition.value.id, graphToPayload(buildGraph.value, typeRules.value))
+    if (!result.ok) {
+      saveStatus.value = `Save blocked: ${result.errors.length} error(s)`
+      applySaveIssues(result.errors, true)
+    } else {
+      saveStatus.value = `Saved to ${result.path}${result.warnings.length ? ` (${result.warnings.length} warning(s))` : ''}`
+      applySaveIssues(result.warnings, false)
+      await loadDataflow(editingDefinition.value.id)
+    }
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e)
+    saveStatus.value = `Save failed: ${message}`
+    try {
+      // The 422 body arrives as a JSON string inside the ApiError error
+      // field ("API request failed: 422 — {"ok":false,...}"); parse it so
+      // per-edge save errors surface on the canvas.
+      const parsed = JSON.parse(message.replace(/^.*?\{/, '{')) as SaveResponse
+      if (!parsed.ok) applySaveIssues(parsed.errors, true)
+    } catch { /* plain error message */ }
+  }
 }
 
-async function loadDataflow(id: string) {
-  selectedDataflowId.value = id
-  const result = await getDataflowDefinition(id, emptyDefinition)
-  definition.value = result.source === 'connected' ? result.data : null
-  apiSource.value = result.source
+function applySaveIssues(issues: SaveIssue[], blocking: boolean) {
+  const styles: Record<string, { color: string; tooltip: string }> = {}
+  for (const issue of issues) {
+    for (const edge of buildGraph.value.edges) {
+      const matchesPort = (issue.portId && (edge.sourcePort === issue.portId || edge.targetPort === issue.portId)) ||
+        (!issue.portId && issue.nodeId && (edge.sourceNode === issue.nodeId || edge.targetNode === issue.nodeId))
+      if (matchesPort) {
+        styles[edge.id] = { color: blocking ? 'var(--accent-red)' : 'var(--accent-yellow)', tooltip: issue.message }
+      }
+    }
+  }
+  edgeStyles.value = { ...edgeStyles.value, ...styles }
 }
 
-async function selectDataflow(id: string) {
-  await loadDataflow(id)
+async function saveAsCurrent() {
+  const target = window.prompt('Save dataflow as (absolute path):')
+  if (!target) return
+  saveStatus.value = 'Saving...'
+  try {
+    const result = await saveDataflowAs(graphToPayload(buildGraph.value, typeRules.value), target)
+    saveStatus.value = result.ok ? `Saved to ${result.path}` : `Save blocked: ${result.errors.length} error(s)`
+  } catch (e) {
+    saveStatus.value = e instanceof Error ? `Save failed: ${e.message}` : 'Save failed'
+  }
+}
+
+// --- Source editor: port types + type rules ---
+
+function onPortUpdate(portName: string, isInput: boolean, urn: string) {
+  if (!selectedBuildNode.value) return
+  const node = buildGraph.value.nodes.find(n => n.id === selectedBuildNode.value)
+  if (!node) return
+  const ports = isInput ? node.inputs : node.outputs
+  if (ports[portName]) {
+    if (urn) ports[portName] = { type: urn }
+    else delete ports[portName].type
+  }
+  buildChecked.value = false
+  checkAllEdges()
+}
+
+function onTypeRulesUpdate(rules: TypeRule[]) {
+  typeRules.value = rules
+}
+
+function createRuleForSelectedEdge() {
+  const edge = buildGraph.value.edges.find(e => e.id === selectedBuildEdge.value)
+  if (!edge) return
+  const srcNode = buildGraph.value.nodes.find(n => n.id === edge.sourceNode)
+  const tgtNode = buildGraph.value.nodes.find(n => n.id === edge.targetNode)
+  const from = srcNode?.outputs[edge.sourcePort]?.type
+  const to = tgtNode?.inputs[edge.targetPort]?.type
+  if (!from || !to) return
+  typeRules.value = buildRulePatch(typeRules.value, from, to)
+  checkAllEdges()
 }
 
 onMounted(async () => {
-  const result = await getDataflows(emptyDataflows)
-  dataflows.value = result.data
-  apiSource.value = result.source
-  apiError.value = result.source === 'fallback' ? (result.error ?? 'Backend API is unavailable.') : ''
-  if (dataflows.value.length > 0) {
-    await loadDataflow(dataflows.value[0].id)
-  }
+  await loadProjects()
+  await loadPalette()
+  const first = projects.value.flatMap(project => project.dataflows)[0]
+  if (first) await loadDataflow(first.id)
 })
 </script>
 
@@ -325,6 +564,10 @@ onMounted(async () => {
   display: flex;
   gap: 4px;
   margin-bottom: 6px;
+}
+
+.source-subtabs {
+  margin-top: 4px;
 }
 
 .view-tab {
@@ -415,4 +658,60 @@ onMounted(async () => {
 .graph-view-canvas { flex: 1; min-height: 0; }
 .graph-view-canvas :deep(.canvas-wrap) { position: absolute; inset: 0; }
 
+/* ── Source editor (M18): grouped sidebar, canvas editor, side panels ── */
+.sidebar-add-project {
+  margin: 4px 0 8px; padding: 8px 10px; width: 100%;
+  background: var(--card-surface); border: 1px dashed var(--hairline-hover);
+  border-radius: 6px; color: var(--accent-cyan); font-size: 12px; font-weight: 510;
+  cursor: pointer; transition: background 120ms ease;
+}
+.sidebar-add-project:hover { background: var(--card-hover); }
+
+.project-group { margin-bottom: 6px; }
+.project-group-header {
+  display: flex; align-items: center; gap: 6px;
+  padding: 8px 0 4px; font-size: 12px; font-weight: 600;
+  color: var(--text-muted-dark);
+}
+.project-group-name {
+  flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.project-group-builtin {
+  font-size: 12px; font-weight: 600; color: var(--text-muted-dark);
+  border: 1px solid var(--hairline); border-radius: 4px; padding: 0 4px;
+}
+.project-group-count { font-size: 12px; color: var(--text-muted-dark); }
+
+.source-fallback {
+  display: flex; flex-direction: column; flex: 1; min-height: 0;
+}
+.parse-note {
+  padding: 10px 14px; font-size: 12px; color: var(--accent-yellow);
+  background: var(--card-surface); border-bottom: 1px solid var(--hairline);
+  flex-shrink: 0;
+}
+.source-side-panel {
+  display: flex; flex-direction: column;
+  width: 264px; min-width: 264px; min-height: 0;
+  border-left: 1px solid var(--hairline);
+  background: var(--panel-surface);
+  overflow-y: auto;
+}
+.edge-props {
+  padding: 12px; border-bottom: 1px solid var(--hairline);
+  flex-shrink: 0;
+}
+.edge-props-header {
+  font-size: 12px; font-weight: 600; color: var(--text-heading); margin-bottom: 6px;
+}
+.edge-props-reason {
+  font-size: 12px; color: var(--text-body); line-height: 1.5; margin-bottom: 8px;
+}
+.edge-props-btn {
+  width: 100%; padding: 8px 10px; font-size: 12px; font-weight: 510;
+  background: var(--card-surface); color: var(--accent-yellow);
+  border: 1px solid var(--hairline); border-radius: 6px; cursor: pointer;
+  transition: background 120ms ease;
+}
+.edge-props-btn:hover { background: var(--card-hover); }
 </style>

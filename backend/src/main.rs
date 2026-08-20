@@ -158,6 +158,7 @@ async fn main() {
         .route("/api/projects/add", post(projects_add))
         .route("/api/projects/delete", post(projects_delete))
         .route("/api/projects/nodes", post(projects_nodes))
+        .route("/api/palette", get(palette))
         .route("/api/metrics/nodes", get(metrics_nodes))
         .route("/api/metrics/nodes/:id/history", get(metrics_node_history))
         .route("/api/otel/status", get(otel_status))
@@ -1060,6 +1061,14 @@ async fn projects_nodes(
         message: error,
     })?;
     Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+/// GET /api/palette — aggregated cross-project node palette (scan of
+/// builtin examples + configured project dirs, merged with manual nodes).
+async fn palette() -> Result<Json<serde_json::Value>, ApiError> {
+    Ok(Json(
+        serde_json::json!({ "entries": project_scan::palette() }),
+    ))
 }
 
 /// GET /api/runtime/nodes/:dataflow_id — per-node runtime status.

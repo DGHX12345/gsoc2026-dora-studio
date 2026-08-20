@@ -387,7 +387,8 @@ function onKeyDown(e: KeyboardEvent) {
   }
 }
 
-// Drop from palette
+// Drop from palette (drag payload is a full PaletteEntry: ports are
+// {name, urn?} objects carrying the declared type URNs)
 function onDragOver(e: DragEvent) { e.preventDefault() }
 function onDrop(e: DragEvent) {
   e.preventDefault()
@@ -395,12 +396,22 @@ function onDrop(e: DragEvent) {
   if (!json) return
   updateRect()
   const w = screenToWorld(e.clientX, e.clientY)
-  const entry = JSON.parse(json)
-  const id = `${entry.operatorId}_${Date.now()}`
+  const entry = JSON.parse(json) as {
+    operator: string; runtime: string; path?: string
+    inputs: Array<{ name: string; urn?: string }>; outputs: Array<{ name: string; urn?: string }>
+  }
+  const toPorts = (ports: Array<{ name: string; urn?: string }>) => {
+    const result: Record<string, PortSpec> = {}
+    for (const port of ports) {
+      result[port.name] = port.urn ? { type: port.urn } : {}
+    }
+    return result
+  }
+  const id = `${entry.operator}_${Date.now()}`
   const newNode: NodeSpec = {
-    id, operatorId: entry.operatorId, runtime: entry.runtime,
-    inputs: Object.fromEntries((entry.inputs as string[]).map((p: string) => [p, {}])),
-    outputs: Object.fromEntries((entry.outputs as string[]).map((p: string) => [p, {}])),
+    id, operatorId: entry.operator, runtime: entry.runtime, path: entry.path,
+    inputs: toPorts(entry.inputs),
+    outputs: toPorts(entry.outputs),
     position: { x: w.x - NODE_W / 2, y: w.y - 18 },
   }
   emit('update:graph', { ...props.graph, nodes: [...props.graph.nodes, newNode] })
