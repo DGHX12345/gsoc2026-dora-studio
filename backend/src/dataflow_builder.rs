@@ -282,12 +282,23 @@ impl DataflowBuilder {
                                     break;
                                 }
                                 if inp_indent == 6 {
-                                    let port_name = inp_trimmed
-                                        .strip_suffix(':')
-                                        .unwrap_or(inp_trimmed)
-                                        .to_string();
+                                    // Port line is either "name:" (nested
+                                    // source form) or the compact
+                                    // "name: node/port" form used by many
+                                    // dora dataflows; split the name off so
+                                    // it round-trips instead of mangling the
+                                    // whole line into the port id.
+                                    let (port_name, _inline_source) = match inp_trimmed
+                                        .split_once(':')
+                                    {
+                                        Some((name, rest)) if !rest.trim().is_empty() => {
+                                            (name.trim().to_string(), Some(rest.trim().to_string()))
+                                        }
+                                        Some((name, _)) => (name.trim().to_string(), None),
+                                        None => (inp_trimmed.to_string(), None),
+                                    };
                                     let mut port_type = None;
-                                    let mut _source = String::new();
+                                    let mut _source = _inline_source.clone().unwrap_or_default();
                                     i += 1;
                                     while i < lines.len() {
                                         let sub = lines[i];
@@ -605,6 +616,22 @@ fn find_yaml_source(yaml: &str, node: &str, port: &str) -> Option<(String, Strin
             in_target_port = true;
             continue;
         }
+        // Compact inline source form: `image: cam/image` (older dora).
+        if in_target_node && indent == 6 {
+            if let Some((name, src)) = trimmed.split_once(':') {
+                if name.trim() == port && !src.trim().is_empty() {
+                    let source = src.trim();
+                    let parts: Vec<&str> = source.splitn(2, '/').collect();
+                    let source_node = parts[0].to_string();
+                    let source_port = if parts.len() > 1 {
+                        parts[1].to_string()
+                    } else {
+                        "output".to_string()
+                    };
+                    return Some((source_node, source_port));
+                }
+            }
+        }
         if in_target_port && indent > 6 {
             if let Some(src) = trimmed.strip_prefix("source:") {
                 let source = src.trim();
@@ -623,6 +650,218 @@ fn find_yaml_source(yaml: &str, node: &str, port: &str) -> Option<(String, Strin
         }
     }
     None
+}
+
+// ---------------------------------------------------------------------------
+// Line-based diff patch (M18): rewrite only the regions the canvas owns —
+// node blocks and the type_rules section — preserving everything else.
+// ---------------------------------------------------------------------------
+
+/// Apply an edited graph onto an existing dataflow YAML, preserving all
+/// lines outside node blocks and the type_rules section verbatim.
+pub fn patch_yaml(original: &str, graph: &DataflowGraph) -> Result<String, BuildError> {
+    let lines: Vec<String> = original.lines().map(str::to_string).collect();
+
+    // 1. Locate the nodes: section and each node block.
+    let blocks = find_node_blocks(&lines);
+    if blocks.is_empty() && !graph.nodes.is_empty() && !lines.iter().any(|l| l.trim() == "nodes:") {
+        // No nodes section at all: fall back to full generation of the
+        // canvas-owned regions appended after any existing content.
+        let mut out = lines.join("\n");
+        if !out.is_empty() && !out.ends_with('\n') {
+            out.push('\n');
+        }
+        out.push_str("nodes:\n");
+        for node in &graph.nodes {
+            out.push_str(&render_node_block(node, &edge_map(graph)));
+        }
+        append_type_rules(&mut out, &graph.type_rules);
+        return Ok(out);
+    }
+
+    // 2. Replace existing blocks and collect insertion points.
+    let mut result: Vec<String> = Vec::new();
+    let mut cursor = 0usize;
+    let mut inserted_ids: std::collections::BTreeSet<String> =
+        graph.nodes.iter().map(|node| node.id.clone()).collect();
+
+    // node blocks in source order
+    let mut ordered_blocks: Vec<(usize, usize, String)> = Vec::new();
+    for (id, (start, end)) in &blocks {
+        ordered_blocks.push((*start, *end, id.clone()));
+    }
+    ordered_blocks.sort();
+
+    // index graph nodes by id
+    let mut graph_nodes: BTreeMap<&str, &NodeSpec> = graph
+        .nodes
+        .iter()
+        .map(|node| (node.id.as_str(), node))
+        .collect();
+
+    let mut insert_after: Option<usize> = None; // line index of last node block end
+
+    for (start, end, id) in &ordered_blocks {
+        result.extend(lines[cursor..*start].iter().cloned());
+        if let Some(node) = graph_nodes.remove(id.as_str()) {
+            result.extend(
+                render_node_block(node, &edge_map(graph))
+                    .lines()
+                    .map(str::to_string),
+            );
+            inserted_ids.remove(id);
+        }
+        // removed nodes: emit nothing
+        cursor = *end + 1;
+        insert_after = Some(result.len());
+    }
+    result.extend(lines[cursor..].iter().cloned());
+
+    // 3. Insert new nodes after the last existing node block (before any
+    // trailing top-level sections).
+    let new_nodes: Vec<&NodeSpec> = graph
+        .nodes
+        .iter()
+        .filter(|node| inserted_ids.contains(&node.id))
+        .collect();
+    if !new_nodes.is_empty() {
+        let mut rendered = String::new();
+        for node in new_nodes {
+            rendered.push_str(&render_node_block(node, &edge_map(graph)));
+        }
+        let insert_at = insert_after
+            .map(|index| {
+                // find the end of that node's rendered lines in `result`
+                // (block content may differ in length, so re-locate by
+                // scanning forward to the next top-level line)
+                let mut index = index;
+                while index < result.len() {
+                    let line = &result[index];
+                    if !line.trim().is_empty() && !line.starts_with(' ') {
+                        break;
+                    }
+                    index += 1;
+                }
+                index
+            })
+            .unwrap_or_else(|| {
+                // no existing blocks: insert right after the nodes: line
+                result
+                    .iter()
+                    .position(|line| line.trim() == "nodes:")
+                    .map(|index| index + 1)
+                    .unwrap_or(0)
+            });
+        let rendered_lines: Vec<String> = rendered.lines().map(str::to_string).collect();
+        for (offset, line) in rendered_lines.into_iter().enumerate() {
+            result.insert(insert_at + offset, line);
+        }
+    }
+
+    // 4. Patch the type_rules top-level section.
+    patch_type_rules_section(&mut result, &graph.type_rules);
+
+    Ok(result.join("\n") + "\n")
+}
+
+fn edge_map(graph: &DataflowGraph) -> BTreeMap<String, EdgeSpec> {
+    graph
+        .edges
+        .iter()
+        .map(|edge| (edge.id.clone(), edge.clone()))
+        .collect()
+}
+
+fn find_node_blocks(lines: &[String]) -> BTreeMap<String, (usize, usize)> {
+    let mut blocks = BTreeMap::new();
+    let mut in_nodes = false;
+    let mut current: Option<(String, usize)> = None;
+    for (index, line) in lines.iter().enumerate() {
+        let trimmed = line.trim();
+        if trimmed == "nodes:" {
+            in_nodes = true;
+            continue;
+        }
+        if in_nodes {
+            let indent = line.chars().take_while(|ch| ch.is_whitespace()).count();
+            if indent == 0 && !trimmed.is_empty() {
+                in_nodes = false;
+                if let Some((id, start)) = current.take() {
+                    blocks.insert(id, (start, index - 1));
+                }
+                continue;
+            }
+            if let Some(id) = trimmed.strip_prefix("- id:") {
+                if let Some((prev_id, start)) = current.take() {
+                    blocks.insert(prev_id, (start, index - 1));
+                }
+                current = Some((id.trim().to_string(), index));
+            }
+        }
+    }
+    if let Some((id, start)) = current.take() {
+        blocks.insert(id, (start, lines.len() - 1));
+    }
+    blocks
+}
+
+fn patch_type_rules_section(result: &mut Vec<String>, rules: &[TypeRuleDef]) {
+    // remove existing section
+    let mut start: Option<usize> = None;
+    let mut end: Option<usize> = None;
+    for (index, line) in result.iter().enumerate() {
+        let trimmed = line.trim();
+        let indent = line.chars().take_while(|ch| ch.is_whitespace()).count();
+        if trimmed == "type_rules:" && indent == 0 {
+            start = Some(index);
+            continue;
+        }
+        if start.is_some() && indent == 0 && !trimmed.is_empty() {
+            end = Some(index);
+            break;
+        }
+    }
+    if let Some(start) = start {
+        let end = end.unwrap_or(result.len());
+        result.drain(start..end);
+    }
+    if !rules.is_empty() {
+        let mut section = vec!["type_rules:".to_string()];
+        for rule in rules {
+            section.push(format!("  - from: {}", rule.from));
+            section.push(format!("    to: {}", rule.to));
+        }
+        let mut insert_at = result
+            .iter()
+            .rposition(|line| !line.trim().is_empty() && !line.starts_with(' '))
+            .map(|index| index + 1)
+            .unwrap_or(result.len());
+        // Never insert between the `nodes:` header and its list items: a
+        // bare `nodes:` line as the last top-level line means the naive
+        // insertion point sits inside the node list, so scan past the
+        // indented block to append after it.
+        if insert_at > 0 && insert_at < result.len() && result[insert_at - 1].trim() == "nodes:" {
+            while insert_at < result.len() {
+                let line = &result[insert_at];
+                if !line.trim().is_empty() && !line.starts_with(' ') {
+                    break;
+                }
+                insert_at += 1;
+            }
+        }
+        for (offset, line) in section.into_iter().enumerate() {
+            result.insert(insert_at + offset, line);
+        }
+    }
+}
+
+fn append_type_rules(out: &mut String, rules: &[TypeRuleDef]) {
+    if !rules.is_empty() {
+        out.push_str("type_rules:\n");
+        for rule in rules {
+            out.push_str(&format!("  - from: {}\n    to: {}\n", rule.from, rule.to));
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -868,5 +1107,94 @@ mod tests {
         assert!(yaml.contains("    path: cam.py"));
         let parsed = DataflowBuilder::from_yaml(&yaml).expect("roundtrip");
         assert_eq!(parsed.graph().nodes[0].path.as_deref(), Some("cam.py"));
+    }
+
+    #[test]
+    fn patch_preserves_comments_and_unknown_fields() {
+        let original = r#"# my project dataflow
+nodes:
+  - id: cam
+    path: cam.py
+    outputs:
+      - image
+    output_types:
+      image: std/media/v1/Image
+  - id: sink
+    path: sink.py
+    inputs:
+      image: cam/image
+env:
+  RUST_LOG: info
+"#;
+        let mut b = DataflowBuilder::from_yaml(original).expect("parses");
+        // edit: change sink input type declaration
+        b.nodes
+            .get_mut("sink")
+            .unwrap()
+            .input_types
+            .insert("image".to_string(), "std/core/v1/Bytes".to_string());
+        // add a node
+        b.add_node(NodeSpec {
+            id: "proc".into(),
+            operator_id: "proc".into(),
+            runtime: Runtime::Python,
+            path: Some("proc.py".into()),
+            inputs: BTreeMap::new(),
+            outputs: BTreeMap::new(),
+            input_types: BTreeMap::new(),
+            output_types: BTreeMap::new(),
+            position: None,
+        })
+        .unwrap();
+        // remove cam
+        b.remove_node("cam").unwrap();
+        let patched = patch_yaml(original, &b.graph()).expect("patches");
+        assert!(
+            patched.contains("# my project dataflow"),
+            "comments preserved"
+        );
+        assert!(
+            patched.contains("env:\n  RUST_LOG: info"),
+            "unknown sections preserved"
+        );
+        assert!(patched.contains("input_types:\n      image: std/core/v1/Bytes"));
+        assert!(patched.contains("  - id: proc"), "new node inserted");
+        assert!(!patched.contains("  - id: cam"), "removed node gone");
+        assert!(
+            !patched.contains("cam/image"),
+            "stale source references gone"
+        );
+    }
+
+    #[test]
+    fn patch_adds_type_rules_section() {
+        let original = "nodes:\n  - id: a\n    path: a.py\n    outputs:\n      - out\n";
+        let mut b = DataflowBuilder::from_yaml(original).expect("parses");
+        b.type_rules.push(TypeRuleDef {
+            from: "x/v1/A".into(),
+            to: "x/v1/B".into(),
+        });
+        let patched = patch_yaml(original, &b.graph()).expect("patches");
+        assert!(patched.contains("type_rules:\n  - from: x/v1/A\n    to: x/v1/B\n"));
+    }
+
+    #[test]
+    fn patch_migrates_legacy_inline_type_lines() {
+        let original = r#"nodes:
+  - id: cam
+    path: cam.py
+    outputs:
+      - image
+        type: image
+"#;
+        let mut b = DataflowBuilder::from_yaml(original).expect("parses");
+        b.nodes
+            .get_mut("cam")
+            .unwrap()
+            .output_types
+            .insert("image".to_string(), "std/media/v1/Image".to_string());
+        let patched = patch_yaml(original, &b.graph()).expect("patches");
+        assert!(!patched.contains("type: image"));
+        assert!(patched.contains("output_types:\n      image: std/media/v1/Image"));
     }
 }
