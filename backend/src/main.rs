@@ -726,8 +726,14 @@ async fn schema_check(
     Json(body): Json<serde_json::Value>,
 ) -> Json<models::SchemaCheckResponse> {
     // New shape: {source_urn, sink_urn, type_rules?}
-    let source_urn = body.get("source_urn").and_then(|v| v.as_str());
-    let sink_urn = body.get("sink_urn").and_then(|v| v.as_str());
+    let source_urn = body
+        .get("source_urn")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty());
+    let sink_urn = body
+        .get("sink_urn")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty());
     if source_urn.is_some() || sink_urn.is_some() {
         let user_rules: Vec<(String, String)> = body
             .get("type_rules")
@@ -745,11 +751,13 @@ async fn schema_check(
             })
             .unwrap_or_default();
         let result = compat_engine::check(source_urn, sink_urn, &user_rules);
-        // enrich struct-mismatch reason via catalog (informational only)
+        // enrich struct-mismatch reason via catalog (informational only, appended on mismatches)
         let detail = match (&source_urn, &sink_urn) {
-            (Some(from), Some(to)) => enrich_struct_detail(from, to, &state.catalog)
-                .map(|detail| format!("{} ({detail})", result.reason))
-                .unwrap_or_else(|| result.reason.clone()),
+            (Some(from), Some(to)) if !result.compatible => {
+                enrich_struct_detail(from, to, &state.catalog)
+                    .map(|detail| format!("{} ({detail})", result.reason))
+                    .unwrap_or_else(|| result.reason.clone())
+            }
             _ => result.reason.clone(),
         };
         return Json(models::SchemaCheckResponse {
