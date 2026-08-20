@@ -3,7 +3,7 @@
 //! Mirrors dora-core `types.rs` CompatibilityGraph + schema_compatible:
 //! same-base URN (param agreement), 4 builtin widening edges, universal
 //! `* -> Bytes` sink, user type_rules with BFS depth <= 3, and structural
-//! struct compatibility (planned in Task 3.2).
+//! struct compatibility (schema_compatible).
 
 use std::collections::{BTreeMap, VecDeque};
 
@@ -211,6 +211,90 @@ pub fn check(
     }
 }
 
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TypeField {
+    pub name: String,
+    pub field_type: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SchemaError {
+    MissingField {
+        field: String,
+    },
+    TypeMismatch {
+        field: String,
+        expected: String,
+        actual: String,
+    },
+}
+
+impl std::fmt::Display for SchemaError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SchemaError::MissingField { field } => write!(f, "missing field \"{field}\""),
+            SchemaError::TypeMismatch {
+                field,
+                expected,
+                actual,
+            } => {
+                write!(
+                    f,
+                    "field \"{field}\" type mismatch: expected {expected}, got {actual}"
+                )
+            }
+        }
+    }
+}
+
+/// Mirrors dora types.rs `schema_compatible`: every expected field must be
+/// present in actual with an equal (normalized) type. Order is irrelevant.
+pub fn schema_compatible(expected: &[TypeField], actual: &[TypeField]) -> Result<(), SchemaError> {
+    for expected_field in expected {
+        match actual
+            .iter()
+            .find(|field| field.name == expected_field.name)
+        {
+            Some(actual_field) => {
+                if normalize_field_type(&actual_field.field_type)
+                    != normalize_field_type(&expected_field.field_type)
+                {
+                    return Err(SchemaError::TypeMismatch {
+                        field: expected_field.name.clone(),
+                        expected: expected_field.field_type.clone(),
+                        actual: actual_field.field_type.clone(),
+                    });
+                }
+            }
+            None => {
+                return Err(SchemaError::MissingField {
+                    field: expected_field.name.clone(),
+                });
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Canonical form for comparing field type strings: trims, uppercases
+/// primitive Arrow names, and normalizes List<...> recursively. Struct
+/// references compare by exact (trimmed) string.
+///
+/// Conservative deviation from dora (which deep-compares resolved struct
+/// schemas): two different struct URNs with identical nested schemas
+/// compare unequal here.
+pub fn normalize_field_type(field_type: &str) -> String {
+    let trimmed = field_type.trim();
+    if let Some(inner) = trimmed
+        .strip_prefix("List<")
+        .and_then(|s| s.strip_suffix('>'))
+    {
+        return format!("List<{}>", normalize_field_type(inner));
+    }
+    trimmed.to_ascii_uppercase()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -337,5 +421,49 @@ mod tests {
     fn padded_urn_matches_dora_behavior() {
         let result = check(Some("std/core/v1/UInt32"), Some("std/core/v1/UInt32 "), &[]);
         assert!(!result.compatible);
+    }
+
+    // 对齐 dora types.rs schema_compatible: actual 字段 ⊇ expected 字段
+    #[test]
+    fn struct_actual_superset_of_expected_ok() {
+        let result = schema_compatible(
+            &[field("width", "UInt32"), field("data", "LargeBinary")],
+            &[
+                field("width", "UInt32"),
+                field("height", "UInt32"),
+                field("data", "LargeBinary"),
+            ],
+        );
+        assert!(result.is_ok());
+    }
+
+    // 对齐 dora types.rs SchemaError::MissingField
+    #[test]
+    fn struct_missing_expected_field_fails() {
+        let result = schema_compatible(
+            &[field("width", "UInt32"), field("data", "LargeBinary")],
+            &[field("width", "UInt32")],
+        );
+        match result {
+            Err(SchemaError::MissingField { field }) => assert_eq!(field, "data"),
+            other => panic!("expected MissingField, got {other:?}"),
+        }
+    }
+
+    // 对齐 dora types.rs SchemaError::TypeMismatch
+    #[test]
+    fn struct_field_type_mismatch_fails() {
+        let result = schema_compatible(&[field("data", "LargeBinary")], &[field("data", "Utf8")]);
+        match result {
+            Err(SchemaError::TypeMismatch { field, .. }) => assert_eq!(field, "data"),
+            other => panic!("expected TypeMismatch, got {other:?}"),
+        }
+    }
+
+    fn field(name: &str, field_type: &str) -> TypeField {
+        TypeField {
+            name: name.to_string(),
+            field_type: field_type.to_string(),
+        }
     }
 }
