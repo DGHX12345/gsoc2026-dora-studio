@@ -1,83 +1,90 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
+import type { PaletteEntry, PalettePort } from '../api'
 
-interface PaletteEntry {
-  operatorId: string; runtime: string; category: string;
-  description: string; inputs: string[]; outputs: string[];
-}
-
-const emit = defineEmits<{ 'drag-start': [entry: PaletteEntry] }>()
+const props = defineProps<{ entries: PaletteEntry[] }>()
+const emit = defineEmits<{
+  'drag-start': [entry: PaletteEntry]
+  'add-manual': []
+}>()
 
 const search = ref('')
 
-const categories: Record<string, PaletteEntry[]> = {
-  perception: [
-    { operatorId: 'camera_driver', runtime: 'python', category: 'perception', description: 'Camera image capture', inputs: [], outputs: ['image'] },
-    { operatorId: 'lidar_driver', runtime: 'rust', category: 'perception', description: 'LiDAR point cloud capture', inputs: [], outputs: ['pointcloud'] },
-    { operatorId: 'object_detection', runtime: 'python', category: 'perception', description: 'Detect objects in images', inputs: ['image'], outputs: ['bboxes'] },
-  ],
-  planning: [
-    { operatorId: 'planner', runtime: 'python', category: 'planning', description: 'Path/trajectory planner', inputs: ['scene_update'], outputs: ['trajectory', 'plan_status'] },
-    { operatorId: 'path_follower', runtime: 'python', category: 'planning', description: 'Follow generated paths', inputs: ['waypoints', 'pose'], outputs: ['cmd_vel'] },
-  ],
-  control: [
-    { operatorId: 'controller', runtime: 'rust', category: 'control', description: 'Joint/motor controller', inputs: ['joint_commands'], outputs: ['joint_positions'] },
-    { operatorId: 'trajectory_executor', runtime: 'python', category: 'control', description: 'Execute joint trajectories', inputs: ['trajectory', 'joint_positions'], outputs: ['joint_commands'] },
-  ],
-  llm: [
-    { operatorId: 'vlm_node', runtime: 'python', category: 'llm', description: 'Vision language model inference', inputs: ['image', 'prompt_template'], outputs: ['response', 'action_vector'] },
-    { operatorId: 'llm_node', runtime: 'python', category: 'llm', description: 'LLM text generation', inputs: ['prompt'], outputs: ['response'] },
-  ],
-  hardware: [
-    { operatorId: 'motor_driver', runtime: 'rust', category: 'hardware', description: 'Motor hardware interface', inputs: ['cmd_vel'], outputs: ['odom'] },
-    { operatorId: 'gripper_driver', runtime: 'python', category: 'hardware', description: 'Gripper control', inputs: ['gripper_cmd'], outputs: ['gripper_state'] },
-  ],
-}
-
-const filtered = computed(() => {
+const groups = computed(() => {
   const q = search.value.toLowerCase()
-  if (!q) return categories
-  const result: Record<string, PaletteEntry[]> = {}
-  for (const [cat, entries] of Object.entries(categories)) {
-    const filtered = entries.filter(e => e.operatorId.toLowerCase().includes(q) || e.description.toLowerCase().includes(q))
-    if (filtered.length) result[cat] = filtered
+  const filtered = props.entries.filter(entry => {
+    if (!q) return true
+    return entry.operator.toLowerCase().includes(q) ||
+      entry.inputs.some(port => port.name.toLowerCase().includes(q)) ||
+      entry.outputs.some(port => port.name.toLowerCase().includes(q))
+  })
+  const byProject = new Map<string, PaletteEntry[]>()
+  for (const entry of filtered) {
+    const list = byProject.get(entry.project) ?? []
+    list.push(entry)
+    byProject.set(entry.project, list)
   }
-  return result
+  return Array.from(byProject.entries()).map(([project, entries]) => ({ project, entries }))
 })
 
-const runtimeColor = (r: string) => ({ python: '#3b82f6', rust: '#f59e0b', c: '#8b5cf6', cpp: '#a78bfa' })[r] ?? '#6b7280'
+function portNames(ports: PalettePort[]): string {
+  return ports.map(p => p.name).join(', ')
+}
+
+function portUrns(ports: PalettePort[]): string {
+  const urns = ports.filter(p => p.urn).map(p => `${p.name}: ${p.urn}`)
+  return urns.length ? `types; ${urns.join('; ')}` : ''
+}
 
 function onDragStart(e: DragEvent, entry: PaletteEntry) {
   e.dataTransfer!.effectAllowed = 'copy'
   e.dataTransfer!.setData('application/json', JSON.stringify(entry))
   emit('drag-start', entry)
 }
+
+// Only --accent-cyan/green/red/yellow exist as accent tokens; map runtimes
+// onto them (python=cyan brand accent, rust=amber, c/cpp=red/green).
+const runtimeColor = (r: string) => ({ python: 'var(--accent-cyan)', rust: 'var(--accent-yellow)', c: 'var(--accent-red)', cpp: 'var(--accent-green)' })[r] ?? 'var(--text-muted-dark)'
 </script>
 
 <template>
   <div class="palette">
     <div class="palette-header">Nodes</div>
     <input v-model="search" class="palette-search" placeholder="Search nodes..." />
-    <div v-for="(entries, cat) in filtered" :key="cat" class="palette-category">
-      <div class="palette-cat-label">{{ cat }}</div>
+    <div v-for="group in groups" :key="group.project" class="palette-category">
+      <div class="palette-cat-label">
+        {{ group.project }}
+        <span v-if="group.entries.every(e => e.manual)" class="palette-cat-manual">(manual)</span>
+      </div>
       <div
-        v-for="entry in entries" :key="entry.operatorId"
+        v-for="entry in group.entries"
+        :key="entry.id"
         class="palette-item"
         draggable="true"
         @dragstart="onDragStart($event, entry)"
       >
         <div class="palette-item-head">
-          <span class="palette-item-name">{{ entry.operatorId }}</span>
-          <span class="palette-item-runtime" :style="{ color: runtimeColor(entry.runtime) }">{{ entry.runtime }}</span>
+          <span class="palette-item-name">{{ entry.operator }}</span>
+          <span class="palette-item-right">
+            <span v-if="entry.manual" class="palette-item-manual">manual</span>
+            <span class="palette-item-runtime" :style="{ color: runtimeColor(entry.runtime) }">{{ entry.runtime }}</span>
+          </span>
         </div>
-        <div class="palette-item-desc">{{ entry.description }}</div>
+        <div v-if="entry.path" class="palette-item-desc">{{ entry.path }}</div>
         <div class="palette-item-ports">
-          <span v-if="entry.inputs.length" class="port-in">in: {{ entry.inputs.join(', ') }}</span>
-          <span v-if="entry.outputs.length" class="port-out">out: {{ entry.outputs.join(', ') }}</span>
+          <span v-if="entry.inputs.length" class="port-in" :title="portUrns(entry.inputs) || undefined">
+            in: {{ portNames(entry.inputs) }}
+            <span v-if="entry.inputs.some(p => p.urn)" class="port-typed"></span>
+          </span>
+          <span v-if="entry.outputs.length" class="port-out" :title="portUrns(entry.outputs) || undefined">
+            out: {{ portNames(entry.outputs) }}
+            <span v-if="entry.outputs.some(p => p.urn)" class="port-typed"></span>
+          </span>
         </div>
       </div>
     </div>
-    <div v-if="Object.keys(filtered).length === 0" class="palette-empty">No nodes found</div>
+    <div v-if="groups.length === 0" class="palette-empty">No nodes found</div>
+    <button class="palette-add-manual" @click="emit('add-manual')">+ Add node manually</button>
   </div>
 </template>
 
@@ -108,6 +115,7 @@ function onDragStart(e: DragEvent, entry: PaletteEntry) {
   text-transform: uppercase; letter-spacing: 0.06em;
   color: var(--text-muted-dark);
 }
+.palette-cat-manual { font-size: 12px; color: var(--accent-yellow); text-transform: none; letter-spacing: 0; }
 .palette-item {
   margin: 2px 10px; padding: 8px 10px;
   background: var(--card-surface); border: 1px solid var(--hairline);
@@ -117,11 +125,27 @@ function onDragStart(e: DragEvent, entry: PaletteEntry) {
 .palette-item:hover { border-color: var(--hairline-hover); background: var(--card-hover); }
 .palette-item:active { cursor: grabbing; }
 .palette-item-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 2px; }
+.palette-item-right { display: flex; align-items: center; gap: 6px; }
 .palette-item-name { font-size: 12px; font-weight: 510; color: var(--text-heading); }
+.palette-item-manual {
+  font-size: 12px; font-weight: 600; color: var(--accent-yellow);
+  border: 1px solid var(--hairline-hover); border-radius: 4px; padding: 0 5px;
+}
 .palette-item-runtime { font-size: 9px; font-weight: 600; }
 .palette-item-desc { font-size: 10px; color: var(--text-muted-dark); margin-bottom: 3px; }
 .palette-item-ports { font-size: 9px; display: flex; gap: 8px; }
 .port-in { color: var(--accent-green); }
 .port-out { color: var(--accent-cyan); }
+.port-typed {
+  display: inline-block; width: 5px; height: 5px; border-radius: 50%;
+  background: var(--accent-cyan); margin-left: 4px; vertical-align: middle;
+}
 .palette-empty { padding: 24px 16px; text-align: center; color: var(--text-muted-dark); font-size: 12px; }
+.palette-add-manual {
+  margin: 10px 12px 12px; padding: 8px 10px;
+  background: var(--card-surface); border: 1px dashed var(--hairline-hover);
+  border-radius: 6px; color: var(--accent-cyan); font-size: 12px; font-weight: 510;
+  cursor: pointer; transition: background 120ms ease;
+}
+.palette-add-manual:hover { background: var(--card-hover); }
 </style>

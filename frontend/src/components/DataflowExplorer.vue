@@ -46,7 +46,7 @@
       </div>
 
 <div v-if="viewMode === 'build'" class="build-layout">
-        <NodePalette @drag-start="onPaletteDrag" />
+        <NodePalette :entries="[]" @drag-start="onPaletteDrag" />
         <div class="build-canvas-wrap">
           <div class="build-toolbar">
             <button class="build-tb-btn" @click="buildYaml" title="Generate YAML">Generate YAML</button>
