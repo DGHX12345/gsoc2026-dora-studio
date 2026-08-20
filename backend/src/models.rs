@@ -490,3 +490,26 @@ pub struct ManualPortRequest {
     #[serde(default)]
     pub urn: String,
 }
+
+// --- Schema check API types (M18 Task 3.3) ---
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TypeRuleDef {
+    pub from: String,
+    pub to: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SchemaCheckResponse {
+    pub compatible: bool,
+    pub level: String,
+    pub detail: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub urn: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rule: Option<TypeRuleDef>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub suggestion: Option<String>,
+}
