@@ -265,43 +265,11 @@ impl DataflowBuilder {
                             node_path = Some(path.trim().to_string());
                         } else if inner_trimmed == "input_types:" {
                             i += 1;
-                            while i < lines.len() {
-                                let t_line = lines[i];
-                                let t_trimmed = t_line.trim_start();
-                                let t_indent = t_line.len() - t_trimmed.len();
-                                if t_indent <= 4 {
-                                    break;
-                                }
-                                if t_indent == 6 {
-                                    if let Some((name, urn)) = t_trimmed.split_once(':') {
-                                        input_types.insert(
-                                            name.trim().to_string(),
-                                            urn.trim().to_string(),
-                                        );
-                                    }
-                                }
-                                i += 1;
-                            }
+                            parse_typed_ports(&lines, &mut i, &mut input_types);
                             continue;
                         } else if inner_trimmed == "output_types:" {
                             i += 1;
-                            while i < lines.len() {
-                                let t_line = lines[i];
-                                let t_trimmed = t_line.trim_start();
-                                let t_indent = t_line.len() - t_trimmed.len();
-                                if t_indent <= 4 {
-                                    break;
-                                }
-                                if t_indent == 6 {
-                                    if let Some((name, urn)) = t_trimmed.split_once(':') {
-                                        output_types.insert(
-                                            name.trim().to_string(),
-                                            urn.trim().to_string(),
-                                        );
-                                    }
-                                }
-                                i += 1;
-                            }
+                            parse_typed_ports(&lines, &mut i, &mut output_types);
                             continue;
                         } else if inner_trimmed == "inputs:" {
                             i += 1;
@@ -496,6 +464,9 @@ fn render_node_block(node: &NodeSpec, edges: &BTreeMap<String, EdgeSpec>) -> Str
             ));
         }
     }
+    // Merge contract: PortSpec.port_type is the canonical canvas state;
+    // input_types/output_types maps are derived/backfill. port_type wins
+    // on conflict (chain-collect inserts later entries over earlier ones).
     let input_types: BTreeMap<&String, &String> = node
         .input_types
         .iter()
@@ -569,6 +540,29 @@ fn parse_type_rules_from_yaml(yaml: &str) -> Vec<TypeRuleDef> {
         }
     }
     rules
+}
+
+/// Parse a node-level `input_types:`/`output_types:` section body (entries at
+/// indent 6) into a name -> URN map. Stops at the first line indented <= 4.
+/// Empty URNs are filtered, matching dataflows.rs `parse_typed_port`.
+fn parse_typed_ports(lines: &[&str], i: &mut usize, map: &mut BTreeMap<String, String>) {
+    while *i < lines.len() {
+        let t_line = lines[*i];
+        let t_trimmed = t_line.trim_start();
+        let t_indent = t_line.len() - t_trimmed.len();
+        if t_indent <= 4 {
+            break;
+        }
+        if t_indent == 6 {
+            if let Some((name, urn)) = t_trimmed.split_once(':') {
+                let urn = urn.trim();
+                if !urn.is_empty() {
+                    map.insert(name.trim().to_string(), urn.to_string());
+                }
+            }
+        }
+        *i += 1;
+    }
 }
 
 fn find_edge_source(
@@ -805,6 +799,20 @@ mod tests {
         let graph = b.graph();
         assert_eq!(graph.nodes.len(), 2);
         assert_eq!(graph.edges.len(), 1);
+    }
+
+    #[test]
+    fn edge_survives_yaml_roundtrip() {
+        let b = make_test_graph();
+        let yaml = b.to_yaml();
+        let parsed = DataflowBuilder::from_yaml(&yaml).expect("roundtrip");
+        let graph = parsed.graph();
+        assert_eq!(graph.edges.len(), 1);
+        let edge = &graph.edges[0];
+        assert_eq!(edge.source_node, "camera");
+        assert_eq!(edge.source_port, "image");
+        assert_eq!(edge.target_node, "detector");
+        assert_eq!(edge.target_port, "image");
     }
 
     #[test]
