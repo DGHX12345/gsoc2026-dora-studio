@@ -2,7 +2,7 @@
   <section class="explorer-layout">
     <aside class="panel sidebar-panel">
       <div class="panel-header">
-        <h2>Dataflows</h2>
+        <h2>{{ t.explorer.projects }}</h2>
         <span :class="['pill', apiSource === 'connected' ? 'success' : 'warning']">{{ apiSourceText }}</span>
       </div>
 
@@ -13,15 +13,25 @@
       </div>
 
       <button class="sidebar-add-project" @click="addProject" title="Scan an additional project directory for dataflows and nodes">
-        ＋ Add project directory
+        {{ t.explorer.addProjectDir }}
       </button>
 
       <div class="flows-scroll">
+        <div class="project-groups-label">{{ t.explorer.dataflows }}</div>
         <div v-for="project in projects" :key="project.path" class="project-group">
           <div class="project-group-header">
             <span class="project-group-name">{{ project.name }}</span>
             <span v-if="project.builtin" class="project-group-builtin">builtin</span>
             <span class="project-group-count">{{ project.dataflows.length }}</span>
+            <button
+              v-if="!project.builtin"
+              class="project-group-remove"
+              :title="t.explorer.removeProjectConfirm"
+              @click="removeProject(project)"
+            >✕</button>
+          </div>
+          <div v-if="!project.builtin && project.dataflows.length === 0" class="project-group-missing">
+            {{ t.explorer.projectMissing }}
           </div>
           <button
             v-for="flow in project.dataflows"
@@ -54,8 +64,8 @@
             <button :class="['view-tab', { active: viewMode === 'build' }]" @click="viewMode = 'build'">Build</button>
           </div>
           <div v-if="viewMode === 'source'" class="view-tabs source-subtabs">
-            <button :class="['view-tab', { active: sourceSubView === 'canvas' }]" @click="sourceSubView = 'canvas'">Canvas</button>
-            <button :class="['view-tab', { active: sourceSubView === 'text' }]" @click="sourceSubView = 'text'">Text</button>
+            <button :class="['view-tab', { active: sourceSubView === 'canvas' }]" @click="sourceSubView = 'canvas'">{{ t.explorer.canvas }}</button>
+            <button :class="['view-tab', { active: sourceSubView === 'text' }]" @click="sourceSubView = 'text'">{{ t.explorer.text }}</button>
           </div>
           <p v-if="viewMode === 'source'">Raw YAML from {{ definition?.relativePath ?? 'dataflow descriptor' }}</p>
           <p v-else>Build dataflows visually — drag nodes, connect ports, generate YAML</p>
@@ -109,10 +119,10 @@
           <NodePalette :entries="paletteEntries" @drag-start="onPaletteDrag" @add-manual="addManualNode" />
           <div class="build-canvas-wrap">
             <div class="build-toolbar">
-              <button class="build-tb-btn" @click="saveCurrent" title="Write canvas edits back to the dataflow YAML">Save</button>
-              <button class="build-tb-btn secondary" @click="saveAsCurrent" title="Generate a new dataflow YAML at an absolute path">Save As</button>
+              <button class="build-tb-btn" @click="saveCurrent" :title="t.explorer.edgeStatusHint">{{ t.explorer.save }}</button>
+              <button class="build-tb-btn secondary" @click="saveAsCurrent" title="Generate a new dataflow YAML at an absolute path">{{ t.explorer.saveAs }}</button>
               <span class="build-tb-sep"></span>
-              <span class="build-tb-status">{{ saveStatus || 'Canvas edits are saved back to the YAML' }}</span>
+              <span class="build-tb-status">{{ saveStatus || t.explorer.edgeStatusHint }}</span>
             </div>
             <DataflowCanvas
               :graph="buildGraph"
@@ -132,13 +142,13 @@
           </div>
           <aside class="source-side-panel">
             <div v-if="selectedBuildEdge && edgeStyles[selectedBuildEdge]" class="edge-props">
-              <div class="edge-props-header">Connection</div>
+              <div class="edge-props-header">{{ t.explorer.connection }}</div>
               <div class="edge-props-reason">{{ edgeStyles[selectedBuildEdge].tooltip }}</div>
               <button
                 v-if="edgeStyles[selectedBuildEdge].color === 'var(--accent-red)'"
                 class="edge-props-btn"
                 @click="createRuleForSelectedEdge"
-              >Declare type rule for this connection</button>
+              >{{ t.explorer.declareRule }}</button>
             </div>
             <PortTypePanel :node="portPanelNode" @update-port="onPortUpdate" />
             <TypeRulesPanel :rules="typeRules" @update:rules="onTypeRulesUpdate" />
@@ -146,7 +156,7 @@
         </div>
         <div v-else class="source-fallback">
           <div v-if="selectedDataflowId && !definition" class="parse-note">
-            This YAML could not be parsed — canvas editing disabled
+            {{ t.explorer.unparseable }}
           </div>
           <div class="source-viewer">
             <pre><code>{{ definition?.source ?? 'No source available.' }}</code></pre>
@@ -165,6 +175,7 @@ import {
   getProjects,
   getPalette,
   addProjectDir,
+  deleteProjectDir,
   submitManualNode,
   buildDataflow,
   validateDataflow,
@@ -190,7 +201,10 @@ import TypeRulesPanel from './TypeRulesPanel.vue'
 import { definitionToGraph, graphToPayload } from '../dataflow-convert'
 import { edgeLevel, edgeColor, buildRulePatch } from '../edge-status'
 import { issuesToEdgeStyles, parseSaveError } from '../save-issues'
+import { useI18n } from '../i18n'
 import type { DataflowGraph as CanvasGraph } from './DataflowCanvas.vue'
+
+const { t } = useI18n()
 
 const emptyDefinition: DataflowDefinitionResponse = {
   id: '', name: '', relativePath: '', source: '', nodeCount: 0, edgeCount: 0, nodes: [],
@@ -208,7 +222,7 @@ const selectedDataflowId = ref('')
 const viewMode = ref<'source' | 'build'>('build')
 const apiSource = ref<ApiSource>('fallback')
 const apiError = ref('')
-const apiSourceText = computed(() => (apiSource.value === 'connected' ? 'API connected' : 'Backend unavailable'))
+const apiSourceText = computed(() => (apiSource.value === 'connected' ? t.value.explorer.apiConnected : t.value.explorer.backendUnavailable))
 
 // --- Canvas graph state (shared by Build mode and the Source canvas editor) ---
 const buildGraph = ref<CanvasGraph>({ nodes: [], edges: [] })
@@ -262,6 +276,18 @@ async function addProject() {
     await loadProjects()
   } catch (e) {
     window.alert(e instanceof Error ? e.message : 'Failed to add project directory')
+  }
+}
+
+// Non-builtin project groups get a remove entry: a missing directory (or a
+// directory the user no longer wants scanned) can be dropped from settings.
+async function removeProject(project: ProjectSummaryResponse) {
+  if (!window.confirm(t.value.explorer.removeProjectConfirm)) return
+  try {
+    await deleteProjectDir(project.path)
+    await loadProjects()
+  } catch (e) {
+    window.alert(e instanceof Error ? e.message : 'Failed to remove project directory')
   }
 }
 
@@ -433,22 +459,22 @@ watch(() => typeRules.value, () => { checkAllEdges() })
 
 async function saveCurrent() {
   if (!editingDefinition.value) return
-  saveStatus.value = 'Saving...'
+  saveStatus.value = t.value.explorer.saving
   try {
     const result = await saveDataflow(editingDefinition.value.id, graphToPayload(buildGraph.value, typeRules.value))
     if (!result.ok) {
-      saveStatus.value = `Save blocked: ${result.errors.length} error(s)`
+      saveStatus.value = t.value.explorer.saveBlocked.replace('{count}', String(result.errors.length))
       applySaveIssues(result.errors, true)
     } else {
       // Reload first: loadDataflow resets saveStatus and re-runs the schema
       // edge checks, so the success message must be set after it completes.
       await loadDataflow(editingDefinition.value.id)
-      saveStatus.value = `Saved to ${result.path}${result.warnings.length ? ` (${result.warnings.length} warning(s))` : ''}`
+      saveStatus.value = `${t.value.explorer.saved.replace('{path}', result.path)}${result.warnings.length ? ` (${result.warnings.length} warning(s))` : ''}`
       applySaveIssues(result.warnings, false)
     }
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e)
-    saveStatus.value = `Save failed: ${message}`
+    saveStatus.value = t.value.explorer.saveFailed.replace('{message}', message)
     // The 422 body arrives as a JSON string inside the ApiError error field
     // ("API request failed: 422 — {"ok":false,...}"); parse it so per-edge
     // save errors surface on the canvas.
@@ -464,12 +490,14 @@ function applySaveIssues(issues: SaveIssue[], blocking: boolean) {
 async function saveAsCurrent() {
   const target = window.prompt('Save dataflow as (absolute path):')
   if (!target) return
-  saveStatus.value = 'Saving...'
+  saveStatus.value = t.value.explorer.saving
   try {
     const result = await saveDataflowAs(graphToPayload(buildGraph.value, typeRules.value), target)
-    saveStatus.value = result.ok ? `Saved to ${result.path}` : `Save blocked: ${result.errors.length} error(s)`
+    saveStatus.value = result.ok
+      ? t.value.explorer.savedAs.replace('{path}', result.path)
+      : t.value.explorer.saveBlocked.replace('{count}', String(result.errors.length))
   } catch (e) {
-    saveStatus.value = e instanceof Error ? `Save failed: ${e.message}` : 'Save failed'
+    saveStatus.value = t.value.explorer.saveFailed.replace('{message}', e instanceof Error ? e.message : String(e))
   }
 }
 
@@ -716,6 +744,20 @@ onMounted(async () => {
   border: 1px solid var(--hairline); border-radius: 4px; padding: 0 4px;
 }
 .project-group-count { font-size: 12px; color: var(--text-muted-dark); }
+.project-groups-label {
+  font-size: 12px; font-weight: 600; text-transform: uppercase;
+  letter-spacing: 0.05em; color: var(--text-muted-dark);
+  padding: 4px 0 2px;
+}
+.project-group-remove {
+  background: none; border: none; color: var(--text-muted-dark);
+  cursor: pointer; font-size: 12px; line-height: 1; padding: 0 2px;
+}
+.project-group-remove:hover { color: var(--accent-red); }
+.project-group-missing {
+  font-size: 12px; color: var(--text-muted-dark); font-style: italic;
+  padding: 0 0 6px;
+}
 
 .source-fallback {
   display: flex; flex-direction: column; flex: 1; min-height: 0;

@@ -21,6 +21,37 @@ type Messages = {
     dora: string
     robot: string
   }
+  explorer: {
+    projects: string
+    addProjectDir: string
+    projectMissing: string
+    removeProjectConfirm: string
+    canvas: string
+    text: string
+    save: string
+    saveAs: string
+    saving: string
+    saved: string
+    saveBlocked: string
+    saveFailed: string
+    savedAs: string
+    declareRule: string
+    typeRules: string
+    noRules: string
+    removeRuleConfirm: string
+    portTypes: string
+    searchType: string
+    selectType: string
+    clearType: string
+    catalogUnavailable: string
+    unparseable: string
+    addManual: string
+    connection: string
+    edgeStatusHint: string
+    apiConnected: string
+    backendUnavailable: string
+    dataflows: string
+  }
   nav: Record<'dashboard' | 'explorer' | 'monitor' | 'logs' | 'replay' | 'visualization' | 'motion' | 'metrics', NavItemText>
   attribution: {
     title: string
@@ -231,6 +262,37 @@ const messages: Record<Locale, Messages> = {
     sections: {
       dora: 'Dora',
       robot: 'Robot',
+    },
+    explorer: {
+      projects: '项目',
+      addProjectDir: '添加项目目录',
+      projectMissing: '（目录不存在）',
+      removeProjectConfirm: '移除该项目目录？',
+      canvas: '画布',
+      text: '原始文本',
+      save: '保存',
+      saveAs: '另存为',
+      saving: '保存中…',
+      saved: '已保存到 {path}',
+      saveBlocked: '保存被阻止：{count} 个错误',
+      saveFailed: '保存失败：{message}',
+      savedAs: '已另存到 {path}',
+      declareRule: '为此连线声明 type rule',
+      typeRules: '类型规则（{count}）',
+      noRules: '未声明类型规则',
+      removeRuleConfirm: '该规则可能影响多条连线，确认删除？',
+      portTypes: '端口类型 — {id}',
+      searchType: '搜索类型 URN…',
+      selectType: '选择类型…',
+      clearType: '清除类型',
+      catalogUnavailable: '类型目录不可用 — 后端离线？',
+      unparseable: '该 YAML 无法解析 — 画布编辑已禁用',
+      addManual: '手动添加节点',
+      connection: '连接',
+      edgeStatusHint: '画布编辑会保存回 YAML',
+      apiConnected: 'API 已连接',
+      backendUnavailable: '后端不可用',
+      dataflows: '数据流',
     },
     nav: {
       dashboard: { label: '总览面板', section: '系统总览', title: 'Studio 总览面板' },
@@ -449,6 +511,37 @@ const messages: Record<Locale, Messages> = {
     sections: {
       dora: 'Dora',
       robot: 'Robot',
+    },
+    explorer: {
+      projects: 'Projects',
+      addProjectDir: 'Add project directory',
+      projectMissing: '(directory missing)',
+      removeProjectConfirm: 'Remove this project directory?',
+      canvas: 'Canvas',
+      text: 'Text',
+      save: 'Save',
+      saveAs: 'Save As',
+      saving: 'Saving...',
+      saved: 'Saved to {path}',
+      saveBlocked: 'Save blocked: {count} error(s)',
+      saveFailed: 'Save failed: {message}',
+      savedAs: 'Saved to {path}',
+      declareRule: 'Declare type rule for this connection',
+      typeRules: 'Type Rules ({count})',
+      noRules: 'No declared type rules.',
+      removeRuleConfirm: 'This rule may affect multiple connections. Remove it?',
+      portTypes: 'Port types — {id}',
+      searchType: 'Search type URN...',
+      selectType: 'Select type...',
+      clearType: 'Clear type',
+      catalogUnavailable: 'Type catalog unavailable — backend offline?',
+      unparseable: 'This YAML could not be parsed — canvas editing disabled',
+      addManual: '+ Add node manually',
+      connection: 'Connection',
+      edgeStatusHint: 'Canvas edits are saved back to the YAML',
+      apiConnected: 'API connected',
+      backendUnavailable: 'Backend unavailable',
+      dataflows: 'Dataflows',
     },
     nav: {
       dashboard: { label: 'Dashboard', section: 'Overview', title: 'Studio dashboard' },

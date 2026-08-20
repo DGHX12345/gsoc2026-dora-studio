@@ -1,7 +1,10 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { getTypeCatalog, type TypeCatalogEntry } from '../api'
+import { useI18n } from '../i18n'
 import type { NodeSpec } from './DataflowCanvas.vue'
+
+const { t } = useI18n()
 
 const props = defineProps<{ node: NodeSpec | null }>()
 const emit = defineEmits<{ 'update-port': [portName: string, isInput: boolean, urn: string] }>()
@@ -34,14 +37,14 @@ function pick(urn: string, portName: string, isInput: boolean) {
 
 <template>
   <div v-if="props.node" class="port-type-panel">
-    <div class="ptp-header">Port types — {{ props.node.id }}</div>
-    <input v-model="search" class="ptp-search" placeholder="Search type URN..." />
+    <div class="ptp-header">{{ t.explorer.portTypes.replace('{id}', props.node.id) }}</div>
+    <input v-model="search" class="ptp-search" :placeholder="t.explorer.searchType" />
     <div class="ptp-section" v-if="Object.keys(props.node.inputs).length">
       <div class="ptp-label">Inputs</div>
       <div v-for="(port, name) in props.node.inputs" :key="name" class="ptp-port">
         <span class="ptp-name">{{ name }}</span>
         <select class="ptp-select" :value="port.type ?? ''" @change="pick(($event.target as HTMLSelectElement).value, name, true)">
-          <option value="">{{ port.type ? 'Clear type' : 'Select type...' }}</option>
+          <option value="">{{ port.type ? t.explorer.clearType : t.explorer.selectType }}</option>
           <optgroup v-for="(entries, category) in grouped" :key="category" :label="category">
             <option v-for="entry in entries" :key="entry.urn" :value="entry.urn">{{ entry.name }} — {{ entry.urn }}</option>
           </optgroup>
@@ -53,14 +56,14 @@ function pick(urn: string, portName: string, isInput: boolean) {
       <div v-for="(port, name) in props.node.outputs" :key="name" class="ptp-port">
         <span class="ptp-name">{{ name }}</span>
         <select class="ptp-select" :value="port.type ?? ''" @change="pick(($event.target as HTMLSelectElement).value, name, false)">
-          <option value="">{{ port.type ? 'Clear type' : 'Select type...' }}</option>
+          <option value="">{{ port.type ? t.explorer.clearType : t.explorer.selectType }}</option>
           <optgroup v-for="(entries, category) in grouped" :key="category" :label="category">
             <option v-for="entry in entries" :key="entry.urn" :value="entry.urn">{{ entry.name }} — {{ entry.urn }}</option>
           </optgroup>
         </select>
       </div>
     </div>
-    <div v-if="!catalog.length" class="ptp-empty">Type catalog unavailable — backend offline?</div>
+    <div v-if="!catalog.length" class="ptp-empty">{{ t.explorer.catalogUnavailable }}</div>
   </div>
 </template>
 

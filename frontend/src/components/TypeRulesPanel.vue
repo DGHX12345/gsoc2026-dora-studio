@@ -1,11 +1,13 @@
 <script setup lang="ts">
 import type { TypeRule } from '../api'
+import { useI18n } from '../i18n'
 
+const { t } = useI18n()
 const props = defineProps<{ rules: TypeRule[] }>()
 const emit = defineEmits<{ 'update:rules': [rules: TypeRule[]] }>()
 
 function remove(index: number) {
-  if (!window.confirm('This rule may affect multiple connections. Remove it?')) return
+  if (!window.confirm(t.value.explorer.removeRuleConfirm)) return
   const next = props.rules.filter((_, i) => i !== index)
   emit('update:rules', next)
 }
@@ -13,8 +15,8 @@ function remove(index: number) {
 
 <template>
   <div class="type-rules-panel">
-    <div class="trp-header">Type Rules ({{ props.rules.length }})</div>
-    <div v-if="!props.rules.length" class="trp-empty">No declared type rules.</div>
+    <div class="trp-header">{{ t.explorer.typeRules.replace('{count}', String(props.rules.length)) }}</div>
+    <div v-if="!props.rules.length" class="trp-empty">{{ t.explorer.noRules }}</div>
     <div v-for="(rule, index) in props.rules" :key="`${rule.from}-${rule.to}`" class="trp-rule">
       <span class="trp-rule-text">{{ rule.from }} → {{ rule.to }}</span>
       <button class="trp-remove" title="Remove rule" @click="remove(index)">✕</button>

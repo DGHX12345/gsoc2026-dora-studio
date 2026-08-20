@@ -1,6 +1,9 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
 import type { PaletteEntry, PalettePort } from '../api'
+import { useI18n } from '../i18n'
+
+const { t } = useI18n()
 
 const props = defineProps<{ entries: PaletteEntry[] }>()
 const emit = defineEmits<{
@@ -84,7 +87,7 @@ const runtimeColor = (r: string) => ({ python: 'var(--accent-cyan)', rust: 'var(
       </div>
     </div>
     <div v-if="groups.length === 0" class="palette-empty">No nodes found</div>
-    <button class="palette-add-manual" @click="emit('add-manual')">+ Add node manually</button>
+    <button class="palette-add-manual" @click="emit('add-manual')">{{ t.explorer.addManual }}</button>
   </div>
 </template>
 
