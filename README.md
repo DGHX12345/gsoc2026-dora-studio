@@ -114,7 +114,36 @@ GET    /api/runtime/status
 GET    /api/runtime/logs
 POST   /api/runtime/start
 POST   /api/runtime/stop
+GET    /api/palette
+GET    /api/projects/list
+POST   /api/projects/add
+POST   /api/projects/delete
+POST   /api/projects/nodes
+GET    /api/types/catalog
+GET    /api/types/:urn
+POST   /api/schema/check
+POST   /api/dataflows/:id/save
+POST   /api/dataflows/save-as
 ```
+
+## Project Directories (Dataflow Explorer 2.0)
+
+The Dataflow Explorer scans the built-in `examples/` directory plus any
+project directories you configure. Add a directory from the Explorer's
+Source tab ("Add project directory"); it is persisted in
+`~/.config/dora-studio/settings.json` under `projectDirs`.
+
+Nodes discovered in your dataflow YAML files populate the node palette,
+including port type URNs (`input_types` / `output_types`). Edge
+compatibility follows dora 1.0 semantics (widening, `type_rules`,
+structural struct checks) and saving runs `dora validate` as a final
+check. Write-back edits only touch node blocks and `type_rules`; all
+other content (comments, `env`, etc.) is preserved, and a backup is
+written to `~/.config/dora-studio/backups/` before each write-back.
+
+Manual nodes (nodes without a dataflow YAML) can be submitted from the
+palette; they are stored in `manualNodes` in the same settings file and
+are marked as manually declared in the UI.
 
 ## Validation
 
