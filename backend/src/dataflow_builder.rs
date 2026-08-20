@@ -1407,5 +1407,14 @@ env:
         );
         assert!(patched.contains("path: b2.py"), "node b edit applied");
         assert!(patched.contains("path: a.py"));
+        assert_eq!(
+            patched.matches("- id: b").count(),
+            1,
+            "node b must appear exactly once (no stale duplicate block)"
+        );
+        assert!(
+            !patched.contains("path: b.py"),
+            "stale original b block must be gone"
+        );
     }
 }
