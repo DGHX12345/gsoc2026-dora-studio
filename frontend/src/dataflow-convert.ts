@@ -31,6 +31,7 @@ export function definitionToGraph(def: DataflowDefinitionResponse): DataflowGrap
   let edgeIndex = 0
   for (const node of def.nodes) {
     for (const entry of node.inputs) {
+      if (!entry.includes(': ')) continue
       const [name, source] = entry.split(': ')
       const [from, output] = source.split('/')
       if (nodes.some(n => n.id === from)) {
@@ -38,7 +39,7 @@ export function definitionToGraph(def: DataflowDefinitionResponse): DataflowGrap
         edges.push({
           id: `e${edgeIndex}`,
           sourceNode: from,
-          sourcePort: output ?? 'output',
+          sourcePort: output ?? name,
           targetNode: node.id,
           targetPort: name,
         })
@@ -48,9 +49,9 @@ export function definitionToGraph(def: DataflowDefinitionResponse): DataflowGrap
   return { nodes, edges }
 }
 
-function runtimeForPath(path?: string): string {
+export function runtimeForPath(path?: string): string {
   const ext = path?.split('.').pop()
-  return { py: 'python', rs: 'rust', cpp: 'c++', cc: 'c++', cxx: 'c++', c: 'c' }[ext ?? ''] ?? 'python'
+  return { py: 'python', rs: 'rust', cpp: 'cpp', cc: 'cpp', cxx: 'cpp', c: 'c' }[ext ?? ''] ?? 'python'
 }
 
 export type BuilderGraphPayload = {

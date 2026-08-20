@@ -1,4 +1,4 @@
-import { definitionToGraph, graphToPayload } from './dataflow-convert'
+import { definitionToGraph, graphToPayload, runtimeForPath } from './dataflow-convert'
 import type { DataflowDefinitionResponse } from './api'
 import type { DataflowGraph } from './components/DataflowCanvas.vue'
 
@@ -41,6 +41,9 @@ const payload = graphToPayload(graph)
 if (payload.nodes.length !== 2 || payload.edges.length !== 1) throw new Error('payload roundtrip failed')
 if (payload.nodes.find(n => n.id === 'cam')?.output_types?.image !== 'std/media/v1/Image') throw new Error('output_types not emitted')
 if (payload.type_rules.length !== 0) throw new Error('type_rules default empty')
+
+if (runtimeForPath('a.cpp') !== 'cpp') throw new Error('cpp runtime must serialize as cpp')
+if (runtimeForPath('a.py') !== 'python' || runtimeForPath('a.rs') !== 'rust') throw new Error('runtime mapping wrong')
 
 const typed = { ...def, nodes: def.nodes.map((n, i) => ({ ...n, id: i === 0 ? 'cam' : 'sink' })) }
 const g2 = definitionToGraph(typed)
