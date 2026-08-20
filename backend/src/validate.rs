@@ -50,21 +50,10 @@ pub async fn validate_yaml(path: &Path) -> Result<ValidateOutcome, String> {
         map_validate_output(&text, true)
     };
     if !success && errors.is_empty() {
-        let message = text
-            .lines()
-            .map(str::trim)
-            .find(|line| !line.is_empty())
-            .map(|line| line.to_string())
-            .unwrap_or_else(|| {
-                format!(
-                    "dora validate failed with exit code {}",
-                    output.status.code().unwrap_or(1)
-                )
-            });
         errors.push(SaveIssue {
             node_id: None,
             port_id: None,
-            message: message.to_string(),
+            message: synthesize_error_message(&text, output.status.code()),
         });
     }
 
@@ -72,6 +61,43 @@ pub async fn validate_yaml(path: &Path) -> Result<ValidateOutcome, String> {
         errors,
         warnings: map_validate_output(&text, false),
     })
+}
+
+/// Synthesize the generic error message shown when `dora validate` fails
+/// without any node/port-addressable line (e.g. a YAML syntax error). Skips
+/// the "Validating <path>..." banner, blank lines, and bare bracketed tags
+/// like `[ERROR]`; prefers the first line that actually describes a failure.
+pub fn synthesize_error_message(text: &str, exit_code: Option<i32>) -> String {
+    let candidates: Vec<&str> = text
+        .lines()
+        .map(str::trim)
+        .filter(|line| {
+            !line.is_empty()
+                && !line.starts_with("Validating ")
+                && !(line.starts_with('[') && line.ends_with(']'))
+        })
+        .collect();
+    let keywords = [
+        "error",
+        "invalid",
+        "failed",
+        "unknown",
+        "does not exist",
+        "caused by",
+    ];
+    for line in &candidates {
+        let lower = line.to_lowercase();
+        if keywords.iter().any(|keyword| lower.contains(keyword)) {
+            return (*line).to_string();
+        }
+    }
+    if let Some(line) = candidates.first() {
+        return (*line).to_string();
+    }
+    format!(
+        "dora validate failed with exit code {}",
+        exit_code.unwrap_or(1)
+    )
 }
 
 /// Extract node/port-addressable issues from `dora validate` output.
@@ -210,5 +236,30 @@ mod tests {
         assert_eq!(issues.len(), 1);
         assert_eq!(issues[0].node_id.as_deref(), Some("sink"));
         assert_eq!(issues[0].port_id.as_deref(), Some("reading"));
+    }
+
+    #[test]
+    fn generic_error_skips_validating_banner() {
+        let text = "Validating /tmp/x.yml...\n\n[ERROR]\nfailed to parse given descriptor\n  Caused by: nodes[0]: unknown field `bogus`\n";
+        let message = synthesize_error_message(text, Some(1));
+        assert!(
+            message.contains("failed to parse given descriptor")
+                || message.contains("unknown field"),
+            "expected the real failure line, got: {message}"
+        );
+        assert!(!message.contains("Validating"), "banner must be skipped");
+        assert!(!message.contains("[ERROR]"), "bare tag must be skipped");
+    }
+
+    #[test]
+    fn generic_error_falls_back_to_first_line_then_exit_code() {
+        assert_eq!(
+            synthesize_error_message("Validating /tmp/x.yml...\n", None),
+            "dora validate failed with exit code 1"
+        );
+        assert_eq!(
+            synthesize_error_message("Validating /tmp/x.yml...\n\nsome odd output\n", Some(3)),
+            "some odd output"
+        );
     }
 }

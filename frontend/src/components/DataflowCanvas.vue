@@ -2,7 +2,7 @@
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { getRuntimeNodeStatuses, reloadNode, type NodeRuntimeStatusResponse } from '../api'
 
-export interface PortSpec { type?: string; description?: string }
+export interface PortSpec { type?: string; description?: string; source?: string }
 export interface NodeSpec {
   id: string; operatorId: string; runtime: string; path?: string;
   inputs: Record<string, PortSpec>; outputs: Record<string, PortSpec>;
@@ -507,7 +507,7 @@ defineExpose({ zoomFit, zoomIn, zoomOut })
           <text :x="node.position.x + NODE_W - 37" :y="node.position.y + 22" :fill="runtimeColor(node.runtime)" font-size="12" text-anchor="middle" font-weight="600" font-family="system-ui, sans-serif">{{ node.runtime }}</text>
           <!-- Operator type row -->
           <rect :x="node.position.x" :y="node.position.y + 36" :width="NODE_W" :height="OP_ROW_H" fill="var(--canvas-base)" opacity="0.5" />
-          <text :x="node.position.x + 14" :y="node.position.y + 50" fill="var(--text-muted-dark)" font-size="12" font-family="system-ui, sans-serif" class="canvas-node-label">{{ displayLabel(node.operatorId, node.operatorId, 40) }}<title>{{ node.operatorId }}</title></text>
+          <text :x="node.position.x + 14" :y="node.position.y + 50" fill="var(--text-muted-dark)" font-size="12" font-family="system-ui, sans-serif" class="canvas-node-label">{{ displayLabel(node.operatorId, node.operatorId, 34) }}<title>{{ node.operatorId }}</title></text>
           <!-- Separator line -->
           <line :x1="node.position.x + 8" :y1="node.position.y + HEADER_OFFSET" :x2="node.position.x + NODE_W - 8" :y2="node.position.y + HEADER_OFFSET" stroke="var(--hairline)" stroke-width="0.5" />
           <!-- Input ports -->

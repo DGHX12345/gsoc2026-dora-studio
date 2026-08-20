@@ -49,4 +49,34 @@ const typed = { ...def, nodes: def.nodes.map((n, i) => ({ ...n, id: i === 0 ? 'c
 const g2 = definitionToGraph(typed)
 if (g2.nodes.length !== 2) throw new Error('reconvert failed')
 
+// External (non-graph-node) input sources are carried on the port and must
+// NOT produce an edge.
+const timed: DataflowDefinitionResponse = {
+  id: 'timed', name: 'timed', relativePath: 'p/t.yml', source: '',
+  nodeCount: 1, edgeCount: 0,
+  nodes: [
+    { id: 'camera', path: 'camera.py', inputs: ['tick: dora/timer/millis/500'], outputs: ['frame'], inputTypes: {}, outputTypes: {} },
+  ],
+}
+const gTimed = definitionToGraph(timed)
+const camTimed = assertDefined(gTimed.nodes.find(n => n.id === 'camera'))
+if (camTimed.inputs.tick?.source !== 'dora/timer/millis/500') throw new Error('external timer source lost')
+if (gTimed.edges.length !== 0) throw new Error('external source must not create an edge')
+// graphToPayload passes node inputs through unchanged.
+const payloadTimed = graphToPayload(gTimed)
+if (payloadTimed.nodes[0].inputs.tick?.source !== 'dora/timer/millis/500') throw new Error('payload must carry the source')
+
+// Bare external source without "/" is treated as an external source too.
+const bare: DataflowDefinitionResponse = {
+  ...timed,
+  nodes: [{ ...timed.nodes[0], inputs: ['tick: external_clock'] }],
+}
+const gBare = definitionToGraph(bare)
+if (gBare.nodes[0].inputs.tick?.source !== 'external_clock') throw new Error('bare external source lost')
+if (gBare.edges.length !== 0) throw new Error('bare external source must not create an edge')
+
+// Normal node-to-node inputs carry NO source field on the port — the edge
+// carries the connection.
+if ('source' in (sink.inputs.image ?? {})) throw new Error('node-to-node input must not carry a source')
+
 console.log('dataflow-convert tests passed')

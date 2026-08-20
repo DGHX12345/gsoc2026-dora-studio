@@ -543,12 +543,14 @@ onMounted(async () => {
   width: 100%;
 }
 
+/* Dataflow names must NOT be truncated (user feedback); the :title tooltip
+   on the button still shows the full name on hover. The status chip stays
+   right-aligned via flex. */
 .flow-name-row strong {
   flex: 1;
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .flow-name-row .status-chip {
@@ -576,6 +578,7 @@ onMounted(async () => {
 
 .sidebar-panel .panel-header .pill {
   flex-shrink: 0;
+  font-size: 11px;
   max-width: 110px;
   overflow: hidden;
   text-overflow: ellipsis;

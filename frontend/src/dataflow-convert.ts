@@ -1,5 +1,5 @@
 import type { DataflowDefinitionResponse, TypeRule } from './api'
-import type { DataflowGraph, NodeSpec, EdgeSpec } from './components/DataflowCanvas.vue'
+import type { DataflowGraph, NodeSpec, EdgeSpec, PortSpec } from './components/DataflowCanvas.vue'
 
 function portSpec(urn?: string) {
   return urn ? { type: urn } : {}
@@ -8,10 +8,18 @@ function portSpec(urn?: string) {
 /** Convert a backend dataflow definition into the canvas graph model. */
 export function definitionToGraph(def: DataflowDefinitionResponse): DataflowGraph {
   const nodes: NodeSpec[] = def.nodes.map((node, index) => {
-    const inputs: Record<string, { type?: string }> = {}
+    const inputs: Record<string, PortSpec> = {}
     for (const entry of node.inputs) {
-      const [name] = entry.split(': ')
-      inputs[name] = portSpec(node.inputTypes?.[name])
+      const [name, source] = entry.split(': ')
+      // Sources that are not graph nodes (e.g. `dora/timer/millis/500` or a
+      // bare external source with no "/") have no edge to carry them, so the
+      // raw source is stored on the input port. Node-to-node sources keep the
+      // port clean — the edge carries the connection.
+      const from = source?.split('/')[0]
+      const external = source !== undefined && !def.nodes.some(n => n.id === from)
+      inputs[name] = external
+        ? { ...portSpec(node.inputTypes?.[name]), source }
+        : portSpec(node.inputTypes?.[name])
     }
     const outputs: Record<string, { type?: string }> = {}
     for (const name of node.outputs) {
@@ -57,7 +65,7 @@ export function runtimeForPath(path?: string): string {
 export type BuilderGraphPayload = {
   nodes: Array<{
     id: string; operator_id: string; runtime: string; path?: string
-    inputs: Record<string, { type?: string }>; outputs: Record<string, { type?: string }>
+    inputs: Record<string, PortSpec>; outputs: Record<string, PortSpec>
     input_types: Record<string, string>; output_types: Record<string, string>
     position: { x: number; y: number }
   }>

@@ -25,6 +25,10 @@ pub struct PortSpec {
     pub port_type: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+    /// Raw input source for non-node producers (e.g. `dora/timer/millis/500`).
+    /// Node-to-node sources are carried by edges, not on the port.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -288,7 +292,7 @@ impl DataflowBuilder {
                                     // dora dataflows; split the name off so
                                     // it round-trips instead of mangling the
                                     // whole line into the port id.
-                                    let (port_name, _inline_source) = match inp_trimmed
+                                    let (port_name, inline_source) = match inp_trimmed
                                         .split_once(':')
                                     {
                                         Some((name, rest)) if !rest.trim().is_empty() => {
@@ -298,7 +302,13 @@ impl DataflowBuilder {
                                         None => (inp_trimmed.to_string(), None),
                                     };
                                     let mut port_type = None;
-                                    let mut _source = _inline_source.clone().unwrap_or_default();
+                                    // The compact "name: node/port" form and the
+                                    // nested "source:" sub-key both feed the same
+                                    // field; node-to-node sources are cleared
+                                    // after the full node set is known (edges
+                                    // carry those), while non-node sources
+                                    // (e.g. dora/timer/...) survive on the port.
+                                    let mut source = inline_source.clone().unwrap_or_default();
                                     i += 1;
                                     while i < lines.len() {
                                         let sub = lines[i];
@@ -311,7 +321,7 @@ impl DataflowBuilder {
                                             port_type = Some(t.trim().to_string());
                                         } else if let Some(s) = sub_trimmed.strip_prefix("source:")
                                         {
-                                            _source = s.trim().to_string();
+                                            source = s.trim().to_string();
                                         }
                                         i += 1;
                                     }
@@ -320,6 +330,11 @@ impl DataflowBuilder {
                                         PortSpec {
                                             port_type,
                                             description: None,
+                                            source: if source.is_empty() {
+                                                None
+                                            } else {
+                                                Some(source)
+                                            },
                                         },
                                     );
                                 } else {
@@ -343,6 +358,7 @@ impl DataflowBuilder {
                                         PortSpec {
                                             port_type: None,
                                             description: None,
+                                            source: None,
                                         },
                                     );
                                 }
@@ -367,6 +383,23 @@ impl DataflowBuilder {
                 })?;
             } else {
                 i += 1;
+            }
+        }
+
+        // Drop port-level sources that resolve to a graph node: those are
+        // node-to-node connections carried by edges, and leaving the raw
+        // source on the port would make a stale reference survive node
+        // removal in patch_yaml. Non-node sources (dora/timer/... and bare
+        // external sources) stay on the port so they re-render verbatim.
+        let node_ids: Vec<String> = builder.nodes.keys().cloned().collect();
+        for node in builder.nodes.values_mut() {
+            for port in node.inputs.values_mut() {
+                if let Some(source) = &port.source {
+                    let from = source.split('/').next().unwrap_or("");
+                    if node_ids.iter().any(|id| id == from) {
+                        port.source = None;
+                    }
+                }
             }
         }
 
@@ -467,12 +500,13 @@ fn render_node_block(node: &NodeSpec, edges: &BTreeMap<String, EdgeSpec>) -> Str
     }
     if !node.inputs.is_empty() {
         out.push_str("    inputs:\n");
-        for (name, _) in &node.inputs {
+        for (name, port) in &node.inputs {
             out.push_str(&format!("      {}:\n", name));
-            out.push_str(&format!(
-                "        source: {}\n",
-                find_edge_source(edges, &node.id, name)
-            ));
+            let source = port
+                .source
+                .clone()
+                .unwrap_or_else(|| find_edge_source(edges, &node.id, name));
+            out.push_str(&format!("        source: {source}\n"));
         }
     }
     // Merge contract: PortSpec.port_type is the canonical canvas state;
@@ -938,6 +972,7 @@ mod tests {
                     PortSpec {
                         port_type: Some("image".into()),
                         description: None,
+                        source: None,
                     },
                 );
                 m
@@ -958,6 +993,7 @@ mod tests {
                     PortSpec {
                         port_type: Some("image".into()),
                         description: None,
+                        source: None,
                     },
                 );
                 m
@@ -970,6 +1006,7 @@ mod tests {
                     PortSpec {
                         port_type: Some("bboxes".into()),
                         description: None,
+                        source: None,
                     },
                 );
                 m
@@ -1325,6 +1362,31 @@ env:
     }
 
     #[test]
+    fn patch_preserves_timer_input_sources() {
+        let original = r#"nodes:
+  - id: camera
+    path: camera.py
+    inputs:
+      tick: dora/timer/millis/500
+    outputs:
+      - frame
+"#;
+        let mut b = DataflowBuilder::from_yaml(original).expect("parses");
+        b.nodes
+            .get_mut("camera")
+            .unwrap()
+            .output_types
+            .insert("frame".into(), "std/media/v1/Image".into());
+        let patched = patch_yaml(original, &b.graph()).expect("patches");
+        assert!(
+            patched.contains("tick: dora/timer/millis/500")
+                || patched.contains("source: dora/timer/millis/500"),
+            "timer source must survive: {patched}"
+        );
+        assert!(!patched.contains("unknown"), "no unknown sources allowed");
+    }
+
+    #[test]
     fn patch_ignores_nested_list_items_in_node_sections() {
         let original = r#"nodes:
   - id: a
@@ -1384,6 +1446,7 @@ env:
                 PortSpec {
                     port_type: None,
                     description: None,
+                    source: None,
                 },
             );
             b.add_node(NodeSpec {
