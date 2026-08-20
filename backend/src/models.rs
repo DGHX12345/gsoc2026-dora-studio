@@ -513,3 +513,37 @@ pub struct SchemaCheckResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub suggestion: Option<String>,
 }
+
+// --- Save API types (M18 Task 3.6) ---
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SaveIssue {
+    pub node_id: Option<String>,
+    pub port_id: Option<String>,
+    pub message: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SaveResponse {
+    pub ok: bool,
+    pub path: String,
+    #[serde(default)]
+    pub warnings: Vec<SaveIssue>,
+    #[serde(default)]
+    pub errors: Vec<SaveIssue>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SaveRequest {
+    pub graph: crate::dataflow_builder::DataflowGraph,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SaveAsRequest {
+    pub graph: crate::dataflow_builder::DataflowGraph,
+    pub target_path: String,
+}

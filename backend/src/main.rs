@@ -24,6 +24,7 @@ mod runtime;
 mod schema_registry;
 mod session;
 mod urn_catalog;
+mod validate;
 
 use std::{path::PathBuf, sync::Arc};
 
@@ -108,6 +109,10 @@ async fn main() {
         .route("/api/health", get(health))
         .route("/api/system/status", get(system_status))
         .route("/api/dataflows", get(dataflows))
+        // Static route registered before the `:id` parameter routes so
+        // "save-as" never resolves as a dataflow id.
+        .route("/api/dataflows/save-as", post(dataflow_save_as))
+        .route("/api/dataflows/:id/save", post(dataflow_save))
         .route("/api/dataflows/:id/definition", get(dataflow_definition))
         .route("/api/dataflows/:id/nodes", get(dataflow_nodes))
         .route("/api/dataflows/:id/logs", get(dataflow_logs))
@@ -696,6 +701,137 @@ async fn dataflow_parse(
     Ok(Json(serde_json::json!({
         "graph": builder.graph(),
     })))
+}
+
+// --- Save API (M18 Task 3.6) ---
+
+/// Copy the current dataflow file into ~/.config/dora-studio/backups
+/// before a write-back, so a broken save can be restored manually.
+fn backup_file(path: &std::path::Path) -> Result<PathBuf, String> {
+    let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
+    let backups = std::path::Path::new(&home).join(".config/dora-studio/backups");
+    std::fs::create_dir_all(&backups).map_err(|error| format!("backup dir: {error}"))?;
+    let name = path
+        .file_name()
+        .map(|name| name.to_string_lossy().to_string())
+        .unwrap_or_else(|| "dataflow.yml".to_string());
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .unwrap_or(0);
+    let backup = backups.join(format!("{name}.{ts}.bak"));
+    std::fs::copy(path, &backup).map_err(|error| format!("backup: {error}"))?;
+    Ok(backup)
+}
+
+/// Validate content against `dora validate`, then write it to `target`.
+/// Validation errors return 422 with the full SaveResponse JSON body;
+/// warnings (and the "validation skipped" notice on dora 0.x) are
+/// non-blocking and returned with the successful save.
+async fn finish_save(
+    target: &std::path::Path,
+    content: &str,
+    display_path: &str,
+) -> Result<Json<models::SaveResponse>, ApiError> {
+    let tmp = std::env::temp_dir().join(format!("dora-studio-save-{}.yml", uuid::Uuid::new_v4()));
+    std::fs::write(&tmp, content).map_err(|error| ApiError {
+        status: StatusCode::INTERNAL_SERVER_ERROR,
+        message: format!("failed to write temp file: {error}"),
+    })?;
+    let outcome = match validate::validate_yaml(&tmp).await {
+        Ok(outcome) => outcome,
+        Err(skipped) => validate::ValidateOutcome {
+            errors: Vec::new(),
+            warnings: vec![models::SaveIssue {
+                node_id: None,
+                port_id: None,
+                message: skipped,
+            }],
+        },
+    };
+    let _ = std::fs::remove_file(&tmp);
+    if !outcome.errors.is_empty() {
+        return Err(ApiError {
+            status: StatusCode::UNPROCESSABLE_ENTITY,
+            message: serde_json::to_string(&models::SaveResponse {
+                ok: false,
+                path: display_path.to_string(),
+                warnings: outcome.warnings,
+                errors: outcome.errors,
+            })
+            .unwrap_or_else(|_| "validate failed".to_string()),
+        });
+    }
+    std::fs::write(target, content).map_err(|error| ApiError {
+        status: StatusCode::INTERNAL_SERVER_ERROR,
+        message: format!("failed to write {display_path}: {error}"),
+    })?;
+    Ok(Json(models::SaveResponse {
+        ok: true,
+        path: display_path.to_string(),
+        warnings: outcome.warnings,
+        errors: Vec::new(),
+    }))
+}
+
+/// Write-back: patch an existing discovered dataflow in place.
+async fn dataflow_save(
+    Path(id): Path<String>,
+    Json(req): Json<models::SaveRequest>,
+) -> Result<Json<models::SaveResponse>, ApiError> {
+    let file = dataflows::resolve_dataflow(&id).map_err(ApiError::from)?;
+    let original = std::fs::read_to_string(&file.path).map_err(|error| ApiError {
+        status: StatusCode::INTERNAL_SERVER_ERROR,
+        message: format!("Failed to read {}: {error}", file.relative_path),
+    })?;
+    let patched =
+        dataflow_builder::patch_yaml(&original, &req.graph).map_err(|error| ApiError {
+            status: StatusCode::UNPROCESSABLE_ENTITY,
+            message: format!("Failed to build YAML: {error}"),
+        })?;
+    backup_file(&file.path).map_err(|error| ApiError {
+        status: StatusCode::INTERNAL_SERVER_ERROR,
+        message: error,
+    })?;
+    finish_save(&file.path, &patched, &file.relative_path).await
+}
+
+/// Save-as: generate a fresh dora 1.0 dataflow YAML at an arbitrary path.
+async fn dataflow_save_as(
+    Json(req): Json<models::SaveAsRequest>,
+) -> Result<Json<models::SaveResponse>, ApiError> {
+    let target = PathBuf::from(req.target_path.trim());
+    if target.as_os_str().is_empty() {
+        return Err(ApiError {
+            status: StatusCode::BAD_REQUEST,
+            message: "missing 'targetPath' field".to_string(),
+        });
+    }
+    if let Some(parent) = target.parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent).map_err(|error| ApiError {
+                status: StatusCode::UNPROCESSABLE_ENTITY,
+                message: format!("cannot create target directory: {error}"),
+            })?;
+        }
+    }
+    let mut builder = dataflow_builder::DataflowBuilder::new();
+    builder.type_rules = req.graph.type_rules.clone();
+    for node in req.graph.nodes {
+        builder.add_node(node).map_err(|error| ApiError {
+            status: StatusCode::UNPROCESSABLE_ENTITY,
+            message: error.to_string(),
+        })?;
+    }
+    for edge in req.graph.edges {
+        builder.connect(edge).map_err(|error| ApiError {
+            status: StatusCode::UNPROCESSABLE_ENTITY,
+            message: error.to_string(),
+        })?;
+    }
+    let yaml = builder.to_yaml();
+    let display = target.to_string_lossy().to_string();
+    finish_save(&target, &yaml, &display).await
 }
 
 async fn dataflow_run(
