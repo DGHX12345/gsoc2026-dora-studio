@@ -26,6 +26,7 @@
           v-for="flow in project.dataflows"
           :key="flow.id"
           :class="['flow-file', { active: selectedDataflowId === flow.id }]"
+          :title="flow.name"
           @click="selectDataflow(flow.id)"
         >
           <span class="flow-name-row">
@@ -165,7 +166,6 @@ import {
   submitManualNode,
   buildDataflow,
   validateDataflow,
-  checkSchema,
   checkSchemaUrn,
   saveDataflow,
   saveDataflowAs,
@@ -299,6 +299,9 @@ async function loadDataflow(id: string) {
     buildGraph.value = definitionToGraph(definition.value)
     typeRules.value = definition.value.typeRules ?? []
     sourceSubView.value = 'canvas'
+    // Sidebar selection always lands on the Source canvas editor so the
+    // Save / Save As toolbar is visible regardless of the active tab.
+    viewMode.value = 'source'
     await checkAllEdges()
   }
 }
@@ -386,7 +389,7 @@ function clearBuild() {
   generatedYaml.value = ''
 }
 
-// --- Edge schema checking (URN-first with old-shape fallback) ---
+// --- Edge schema checking (always URN-based; checkSchemaUrn handles missing URNs) ---
 
 const edgeStyles = ref<Record<string, { color: string; tooltip: string }>>({})
 const schemaChecking = ref(false)
@@ -403,12 +406,7 @@ async function checkAllEdges() {
     const srcUrn = srcNode.outputs[edge.sourcePort]?.type
     const tgtUrn = tgtNode.inputs[edge.targetPort]?.type
     try {
-      const resp = srcUrn || tgtUrn
-        ? await checkSchemaUrn({ source_urn: srcUrn, sink_urn: tgtUrn, type_rules: typeRules.value })
-        : await checkSchema({
-            source_operator: srcNode.operatorId, source_port: edge.sourcePort,
-            sink_operator: tgtNode.operatorId, sink_port: edge.targetPort,
-          })
+      const resp = await checkSchemaUrn({ source_urn: srcUrn, sink_urn: tgtUrn, type_rules: typeRules.value })
       const level = edgeLevel(resp)
       styles[edge.id] = { color: edgeColor(level), tooltip: resp.detail + (resp.suggestion ? ` — ${resp.suggestion}` : '') }
     } catch {
@@ -420,8 +418,13 @@ async function checkAllEdges() {
   schemaChecking.value = false
 }
 
-// Re-check schema when edges change, and when type rules change.
-watch(() => buildGraph.value.edges.length, () => { checkAllEdges() })
+// Re-check schema when edges change — the signature watch also fires when an
+// edge is rewired between different endpoints (not just when the count
+// changes). Type-rule changes re-check as well.
+watch(
+  () => buildGraph.value.edges.map(e => `${e.sourceNode}/${e.sourcePort}->${e.targetNode}/${e.targetPort}`).join('|'),
+  () => { checkAllEdges() }
+)
 watch(() => typeRules.value, () => { checkAllEdges() })
 
 // --- Source editor: save write-back ---
@@ -550,6 +553,33 @@ onMounted(async () => {
 
 .flow-name-row .status-chip {
   flex-shrink: 0;
+}
+
+.flow-file small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Sidebar panel header: keep the status pill inside its container */
+.sidebar-panel .panel-header {
+  gap: 8px;
+}
+
+.sidebar-panel .panel-header h2 {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sidebar-panel .panel-header .pill {
+  flex-shrink: 0;
+  max-width: 110px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .view-tabs {

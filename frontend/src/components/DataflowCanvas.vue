@@ -175,9 +175,11 @@ function nodeHeight(node: NodeSpec): number {
   return HEADER_OFFSET + pc * PORT_GAP + 8
 }
 
-/// Truncate display label for long auto-generated IDs.
-function displayLabel(id: string, defaultLabel: string): string {
-  if (id.length > 22) return id.slice(0, 19) + '...'
+/// Truncate display label for long auto-generated IDs. SVG <text> cannot be
+/// ellipsized with CSS, so truncation is done in JS; the full label is shown
+/// via a <title> hover tooltip on the element.
+function displayLabel(id: string, defaultLabel: string, maxLen = 22): string {
+  if (id.length > maxLen) return id.slice(0, maxLen - 3) + '...'
   return defaultLabel || id
 }
 
@@ -490,7 +492,7 @@ defineExpose({ zoomFit, zoomIn, zoomOut })
           <rect :x="node.position.x" :y="node.position.y" :width="NODE_W" height="36" rx="10" fill="var(--hairline)" opacity="0.4" />
           <rect :x="node.position.x" :y="node.position.y + 26" :width="NODE_W" height="10" fill="var(--hairline)" opacity="0.4" />
           <!-- Node name -->
-          <text :x="node.position.x + 14" :y="node.position.y + 22" fill="var(--text-heading)" font-size="14" font-weight="600" font-family="system-ui, sans-serif">{{ displayLabel(node.id, node.id) }}</text>
+          <text :x="node.position.x + 14" :y="node.position.y + 22" fill="var(--text-heading)" font-size="14" font-weight="600" font-family="system-ui, sans-serif" class="canvas-node-label">{{ displayLabel(node.id, node.id) }}<title>{{ node.id }}</title></text>
           <!-- Status dot (M03) -->
           <circle
             v-if="nodeStatuses[node.id]"
@@ -502,10 +504,10 @@ defineExpose({ zoomFit, zoomIn, zoomOut })
           <title v-if="nodeStatuses[node.id]">Status: {{ statusLabel(nodeStatuses[node.id]) }}</title>
           <!-- Runtime badge -->
           <rect :x="node.position.x + NODE_W - 62" :y="node.position.y + 8" width="50" height="20" rx="6" :fill="runtimeColor(node.runtime)" opacity="0.18" />
-          <text :x="node.position.x + NODE_W - 37" :y="node.position.y + 22" :fill="runtimeColor(node.runtime)" font-size="11" text-anchor="middle" font-weight="600" font-family="system-ui, sans-serif">{{ node.runtime }}</text>
+          <text :x="node.position.x + NODE_W - 37" :y="node.position.y + 22" :fill="runtimeColor(node.runtime)" font-size="12" text-anchor="middle" font-weight="600" font-family="system-ui, sans-serif">{{ node.runtime }}</text>
           <!-- Operator type row -->
           <rect :x="node.position.x" :y="node.position.y + 36" :width="NODE_W" :height="OP_ROW_H" fill="var(--canvas-base)" opacity="0.5" />
-          <text :x="node.position.x + 14" :y="node.position.y + 50" fill="var(--text-muted-dark)" font-size="11" font-family="system-ui, sans-serif">{{ node.operatorId }}</text>
+          <text :x="node.position.x + 14" :y="node.position.y + 50" fill="var(--text-muted-dark)" font-size="12" font-family="system-ui, sans-serif" class="canvas-node-label">{{ displayLabel(node.operatorId, node.operatorId, 40) }}<title>{{ node.operatorId }}</title></text>
           <!-- Separator line -->
           <line :x1="node.position.x + 8" :y1="node.position.y + HEADER_OFFSET" :x2="node.position.x + NODE_W - 8" :y2="node.position.y + HEADER_OFFSET" stroke="var(--hairline)" stroke-width="0.5" />
           <!-- Input ports -->
@@ -563,6 +565,16 @@ defineExpose({ zoomFit, zoomIn, zoomOut })
 .canvas-port { transition: r 120ms ease; cursor: crosshair; }
 .canvas-port:hover { r: 10; }
 .canvas-edge { transition: opacity 150ms ease; cursor: pointer; }
+
+/* Long node labels are truncated in JS (displayLabel); these properties keep
+   the intent and prevent wrap/overflow if the label ever renders as HTML.
+   SVG <text> cannot ellipsize via CSS, so the full label is in <title>. */
+.canvas-node-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
 .zoom-controls {
   position: absolute; bottom: 12px; right: 12px;
