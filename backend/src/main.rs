@@ -717,7 +717,7 @@ fn backup_file(path: &std::path::Path) -> Result<PathBuf, String> {
         .unwrap_or_else(|| "dataflow.yml".to_string());
     let ts = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map(|duration| duration.as_secs())
+        .map(|duration| duration.as_millis())
         .unwrap_or(0);
     let backup = backups.join(format!("{name}.{ts}.bak"));
     std::fs::copy(path, &backup).map_err(|error| format!("backup: {error}"))?;
@@ -733,7 +733,16 @@ async fn finish_save(
     content: &str,
     display_path: &str,
 ) -> Result<Json<models::SaveResponse>, ApiError> {
-    let tmp = std::env::temp_dir().join(format!("dora-studio-save-{}.yml", uuid::Uuid::new_v4()));
+    // Stage the temp file in the target's directory so the final rename is
+    // a same-filesystem atomic replace (spec §4 step 6: a crash mid-write
+    // must not corrupt the dataflow file). Fall back to the system temp dir
+    // when the target has no parent directory.
+    let tmp_dir = target
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .map(|parent| parent.to_path_buf())
+        .unwrap_or_else(std::env::temp_dir);
+    let tmp = tmp_dir.join(format!("dora-studio-save-{}.yml", uuid::Uuid::new_v4()));
     std::fs::write(&tmp, content).map_err(|error| ApiError {
         status: StatusCode::INTERNAL_SERVER_ERROR,
         message: format!("failed to write temp file: {error}"),
@@ -749,8 +758,8 @@ async fn finish_save(
             }],
         },
     };
-    let _ = std::fs::remove_file(&tmp);
     if !outcome.errors.is_empty() {
+        let _ = std::fs::remove_file(&tmp);
         return Err(ApiError {
             status: StatusCode::UNPROCESSABLE_ENTITY,
             message: serde_json::to_string(&models::SaveResponse {
@@ -762,9 +771,14 @@ async fn finish_save(
             .unwrap_or_else(|_| "validate failed".to_string()),
         });
     }
-    std::fs::write(target, content).map_err(|error| ApiError {
-        status: StatusCode::INTERNAL_SERVER_ERROR,
-        message: format!("failed to write {display_path}: {error}"),
+    // The temp file already holds `content`; rename it into place instead
+    // of re-writing the target (atomic on the same filesystem).
+    std::fs::rename(&tmp, target).map_err(|error| {
+        let _ = std::fs::remove_file(&tmp);
+        ApiError {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            message: format!("failed to write {display_path}: {error}"),
+        }
     })?;
     Ok(Json(models::SaveResponse {
         ok: true,
@@ -830,6 +844,14 @@ async fn dataflow_save_as(
         })?;
     }
     let yaml = builder.to_yaml();
+    // Back up an existing target before overwriting it, matching the
+    // write-back precedent.
+    if target.exists() {
+        backup_file(&target).map_err(|error| ApiError {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            message: error,
+        })?;
+    }
     let display = target.to_string_lossy().to_string();
     finish_save(&target, &yaml, &display).await
 }
