@@ -805,6 +805,22 @@ fn find_node_blocks(lines: &[String]) -> BTreeMap<String, (usize, usize)> {
     blocks
 }
 
+/// Given an index into `result` that sits at a top-level header line, return
+/// the index just past that header's indented block (children plus any blank
+/// lines). Used to place new top-level sections after the whole block instead
+/// of inside it.
+fn skip_indented_block(result: &[String], mut index: usize) -> usize {
+    if index < result.len() && !result[index].trim().is_empty() && !result[index].starts_with(' ') {
+        index += 1;
+        while index < result.len()
+            && (result[index].starts_with(' ') || result[index].trim().is_empty())
+        {
+            index += 1;
+        }
+    }
+    index
+}
+
 fn patch_type_rules_section(result: &mut Vec<String>, rules: &[TypeRuleDef]) {
     // remove existing section
     let mut start: Option<usize> = None;
@@ -821,33 +837,33 @@ fn patch_type_rules_section(result: &mut Vec<String>, rules: &[TypeRuleDef]) {
             break;
         }
     }
-    if let Some(start) = start {
-        let end = end.unwrap_or(result.len());
-        result.drain(start..end);
-    }
+    // When a section already exists, re-insert at its old position so it
+    // keeps its place relative to surrounding top-level sections (e.g. a
+    // trailing `env:` block stays after type_rules).
+    let mut insert_at = match start {
+        Some(start) => {
+            let end = end.unwrap_or(result.len());
+            result.drain(start..end);
+            start
+        }
+        // No existing section: insert after the last top-level section.
+        // Never insert between a top-level header and its indented block: the
+        // naive insertion point (right after the last top-level line) sits
+        // inside that block when the file ends with a section that has
+        // children (e.g. a trailing `env:`), so skip past the whole block to
+        // append after it.
+        None if !rules.is_empty() => result
+            .iter()
+            .rposition(|line| !line.trim().is_empty() && !line.starts_with(' '))
+            .map(|index| skip_indented_block(result, index))
+            .unwrap_or(result.len()),
+        None => result.len(),
+    };
     if !rules.is_empty() {
         let mut section = vec!["type_rules:".to_string()];
         for rule in rules {
             section.push(format!("  - from: {}", rule.from));
             section.push(format!("    to: {}", rule.to));
-        }
-        let mut insert_at = result
-            .iter()
-            .rposition(|line| !line.trim().is_empty() && !line.starts_with(' '))
-            .map(|index| index + 1)
-            .unwrap_or(result.len());
-        // Never insert between the `nodes:` header and its list items: a
-        // bare `nodes:` line as the last top-level line means the naive
-        // insertion point sits inside the node list, so scan past the
-        // indented block to append after it.
-        if insert_at > 0 && insert_at < result.len() && result[insert_at - 1].trim() == "nodes:" {
-            while insert_at < result.len() {
-                let line = &result[insert_at];
-                if !line.trim().is_empty() && !line.starts_with(' ') {
-                    break;
-                }
-                insert_at += 1;
-            }
         }
         for (offset, line) in section.into_iter().enumerate() {
             result.insert(insert_at + offset, line);
@@ -1176,6 +1192,49 @@ env:
         });
         let patched = patch_yaml(original, &b.graph()).expect("patches");
         assert!(patched.contains("type_rules:\n  - from: x/v1/A\n    to: x/v1/B\n"));
+    }
+
+    #[test]
+    fn patch_type_rules_after_trailing_env_section() {
+        let original = "nodes:\n  - id: a\n    path: a.py\n    outputs:\n      - out\nenv:\n  RUST_LOG: info\n";
+        let mut b = DataflowBuilder::from_yaml(original).expect("parses");
+        b.type_rules.push(TypeRuleDef {
+            from: "x/v1/A".into(),
+            to: "x/v1/B".into(),
+        });
+        let patched = patch_yaml(original, &b.graph()).expect("patches");
+        // env section intact, type_rules AFTER the whole env block
+        assert!(patched.contains("env:\n  RUST_LOG: info\n"));
+        assert!(patched.contains("type_rules:\n  - from: x/v1/A\n    to: x/v1/B\n"));
+        let env_pos = patched.find("env:").unwrap();
+        let rules_pos = patched.find("type_rules:").unwrap();
+        assert!(
+            rules_pos > env_pos,
+            "type_rules must come after the env block"
+        );
+    }
+
+    #[test]
+    fn patch_replaces_type_rules_before_trailing_env_section() {
+        let original = "nodes:\n  - id: a\n    path: a.py\n    outputs:\n      - out\ntype_rules:\n  - from: x/v1/A\n    to: x/v1/B\nenv:\n  RUST_LOG: info\n";
+        let mut b = DataflowBuilder::from_yaml(original).expect("parses");
+        assert_eq!(b.type_rules.len(), 1, "existing rule parsed");
+        b.type_rules.push(TypeRuleDef {
+            from: "x/v1/C".into(),
+            to: "x/v1/D".into(),
+        });
+        let patched = patch_yaml(original, &b.graph()).expect("patches");
+        // replaced section stays before env:, env block not mangled
+        assert!(patched.contains("env:\n  RUST_LOG: info\n"));
+        assert!(patched.contains(
+            "type_rules:\n  - from: x/v1/A\n    to: x/v1/B\n  - from: x/v1/C\n    to: x/v1/D\n"
+        ));
+        let rules_pos = patched.find("type_rules:").unwrap();
+        let env_pos = patched.find("env:").unwrap();
+        assert!(
+            rules_pos < env_pos,
+            "replaced type_rules must stay before the env block"
+        );
     }
 
     #[test]
