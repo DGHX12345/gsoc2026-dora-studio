@@ -179,6 +179,7 @@ pub(crate) fn parse_dataflow(source: &str, label: &str) -> Result<ParsedDataflow
     let mut nodes = Vec::new();
     let mut current_node: Option<ParsedNode> = None;
     let mut current_section: Option<NodeSection> = None;
+    let mut pending_input: Option<String> = None;
     let mut in_nodes = false;
 
     let mut diagnostics = Vec::new();
@@ -219,6 +220,7 @@ pub(crate) fn parse_dataflow(source: &str, label: &str) -> Result<ParsedDataflow
                 output_types: BTreeMap::new(),
             });
             current_section = None;
+            pending_input = None;
             continue;
         }
 
@@ -229,20 +231,26 @@ pub(crate) fn parse_dataflow(source: &str, label: &str) -> Result<ParsedDataflow
         if let Some(id) = trimmed.strip_prefix("id:") {
             node.id = clean_scalar(id);
             current_section = None;
+            pending_input = None;
         } else if let Some(path) = trimmed.strip_prefix("path:") {
             node.path = Some(clean_scalar(path));
             current_section = None;
+            pending_input = None;
         } else if trimmed == "inputs:" {
             current_section = Some(NodeSection::Inputs);
+            pending_input = None;
         } else if trimmed == "outputs:" {
             current_section = Some(NodeSection::Outputs);
+            pending_input = None;
         } else if trimmed == "input_types:" {
             current_section = Some(NodeSection::InputTypes);
+            pending_input = None;
         } else if trimmed == "output_types:" {
             current_section = Some(NodeSection::OutputTypes);
+            pending_input = None;
         } else if let Some(section) = current_section.as_ref() {
             match section {
-                NodeSection::Inputs => parse_input(trimmed, &mut node.inputs),
+                NodeSection::Inputs => parse_input(trimmed, &mut node.inputs, &mut pending_input),
                 NodeSection::Outputs => parse_output(trimmed, &mut node.outputs),
                 NodeSection::InputTypes => parse_typed_port(trimmed, &mut node.input_types),
                 NodeSection::OutputTypes => parse_typed_port(trimmed, &mut node.output_types),
@@ -284,11 +292,30 @@ fn push_node(
     Ok(())
 }
 
-fn parse_input(line: &str, inputs: &mut BTreeMap<String, String>) {
+/// Parse one line inside a node's `inputs:` section. dora 1.0 accepts both
+/// the compact form (`name: source/port`) and the nested form written back by
+/// Studio (`name:` followed by an indented `source: source/port` line). For
+/// the nested form a pending port name is remembered on the empty `name:`
+/// line and resolved by the following `source:` sub-key.
+fn parse_input(line: &str, inputs: &mut BTreeMap<String, String>, pending: &mut Option<String>) {
+    if let Some(port) = pending.as_deref() {
+        if let Some(value) = line.strip_prefix("source:") {
+            let value = clean_scalar(value);
+            if !value.is_empty() {
+                inputs.insert(port.to_string(), value);
+            }
+            *pending = None;
+            return;
+        }
+    }
     if let Some((name, source)) = line.split_once(':') {
+        let name = clean_scalar(name);
         let source = clean_scalar(source);
         if !source.is_empty() {
-            inputs.insert(clean_scalar(name), source);
+            inputs.insert(name, source);
+            *pending = None;
+        } else if !name.is_empty() {
+            *pending = Some(name);
         }
     }
 }
@@ -725,6 +752,39 @@ nodes:
         let parsed = parse_dataflow(SAMPLE, "sample").expect("sample parses");
 
         assert_eq!(parsed.nodes.len(), 2);
+        assert_eq!(edge_count(&parsed), 1);
+    }
+
+    #[test]
+    fn parses_nested_input_form() {
+        let parsed = parse_dataflow(
+            r#"
+nodes:
+  - id: camera
+    path: camera.py
+    inputs:
+      tick:
+        source: dora/timer/millis/500
+    outputs:
+      - frame
+  - id: sink
+    path: sink.py
+    inputs:
+      frame:
+        source: camera/frame
+"#,
+            "nested.yml",
+        )
+        .expect("nested inputs parse");
+        assert_eq!(parsed.nodes.len(), 2);
+        assert_eq!(
+            parsed.nodes[0].inputs.get("tick").map(String::as_str),
+            Some("dora/timer/millis/500")
+        );
+        assert_eq!(
+            parsed.nodes[1].inputs.get("frame").map(String::as_str),
+            Some("camera/frame")
+        );
         assert_eq!(edge_count(&parsed), 1);
     }
 
