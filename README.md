@@ -126,7 +126,7 @@ Environment overrides:
 
 ## Dashboard
 
-[SCREENSHOT: Dashboard overview — session status pill, Start/Stop session button, dora version environment card, quick start panel]
+![Screenshot](docs/screenshots/dashboard-overview.png)
 
 - **Session control**: Start/Stop maps to `dora up` / `dora down`. The
   status reflects coordinator reachability, so sessions started outside
@@ -182,7 +182,7 @@ Clicking a dataflow opens it on the canvas (Canvas / Text sub-views):
 
 ![Screenshot](docs/screenshots/canvas-colored-edges.png)
 ![Screenshot](docs/screenshots/port-types-panel.png)
-[SCREENSHOT: Type Rules panel and the edge property box with the "Declare type rule" button]
+![Screenshot](docs/screenshots/type-rules-panel.png)
 
 ### Saving
 
@@ -449,12 +449,12 @@ running (the OTLP receiver tests bind ports 4317/4318).
 
 Place the screenshots at the bracketed markers above. Checklist:
 
-- [ ] Dashboard overview (session pill + version card + quick start) — **pending**
+- [x] Dashboard overview (session pill + version card + quick start)
 - [x] Dashboard version card expanded (candidates + badges)
 - [x] Explorer Source tab (project groups + canvas)
 - [x] Canvas with colored edges (green/red/yellow + tooltip)
 - [x] Port types panel (URN picker, category groups, search)
-- [ ] Type Rules panel + edge property "Declare type rule" button — **pending**
+- [x] Type Rules panel + edge property "Declare type rule" button
 - [x] Save status bar (successful write-back)
 - [x] Run & Monitor (session bar, Run/Stop, Record UI, recordings list)
 - [x] Logs & Events (three log levels)
