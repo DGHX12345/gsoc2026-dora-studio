@@ -1,0 +1,110 @@
+dora-studio 交接说明 — 从 M18 开始（2026-08-19 写）
+
+你是接手的新 AI。项目是 dora-studio：为 dora-rs 构建的本地 Web GUI
+（GSoC 2026），用于可视化、运行、调试 DORA 机器人应用。学生已获 Final
+延期至 2026-11-02。**M16.5（去终端化）与 M17（版本管理）已全部交付并经
+学生人工验收通过。你的任务是 M18 Dataflow Explorer 2.0（mentor 重点关注
+模块）。**
+
+== 开始前必读（按顺序）==
+1. 本文件（先读完再动手）
+2. plans2.0/M18-dataflow-explorer-2.md — 你的任务计划（已批准，只设计
+   未实施；实施前先读，若与现状不一致先看代码再采用最小兼容实现）
+3. plans2.0/M16.5-terminal-free-ops.md — 已交付模块的完整记录（含
+   Revision 设计决策、验收清单、风险表）
+4. plans2.0/M17-dora-version-manager.md — 已交付（settings 热切换 +
+   Dashboard 环境卡）
+5. HANDOFF-M165.txt — 上一代交接（含 M00-M18 总览、M15.5/M15.6 坑位、
+   关键约定，仍有效）
+6. plans2.0/OVERVIEW.md — 模块总表、关键路径、风险登记
+
+== 环境（与上代相同）==
+- 工作目录: /home/dora/gsoc2026-dora-studio/.claude/worktrees/week12-b
+  （必须是这个 worktree；分支 week12-2.0）
+- **cwd 陷阱（最危险）**: Bash 工作目录会被重置到主仓库
+  /home/dora/gsoc2026-dora-studio（旧代码）。一切 cargo/npm/git 命令
+  要么先 cd worktree，要么用绝对路径；曾多次在错误目录跑测试得假结果、
+  把相对路径补丁打进主仓库。动手前先 pwd 确认
+- 后端 Rust 1.75（edition 2021）；前端 Vue 3 + TS + Vite + 纯 CSS
+- dora 1.0 CLI: /home/dora/.venvs/dora-studio-1.0/bin/dora（1.0.0-rc.4）；
+  PATH 上默认是 0.5（~/.local/bin/dora）
+- **M17 起有 settings 文件**: ~/.config/dora-studio/settings.json 已存在，
+  doraBin 当前指向 1.0 venv——启动后端可以省略 DORA_STUDIO_DORA_BIN
+  环境变量（但 venv PATH 仍建议带上，daemon 节点需要 venv python 的
+  pyarrow）。稳妥启动方式：
+    cd worktree && export VIRTUAL_ENV=/home/dora/.venvs/dora-studio-1.0 \
+    && export PATH="$VIRTUAL_ENV/bin:$PATH" && cargo run --manifest-path backend/Cargo.toml
+- 后端 3001；前端 npm --prefix frontend run dev → 5173
+
+== 已交付状态（2026-08-19，全部学生验收通过）==
+
+M16.5 去终端化（3 commit）:
+- dora_env.rs: 二进制定位（env > settings > PATH）+ 严格 1.x 版本门；
+  0.5 版本信息在 stderr（有回退解析）
+- session.rs: DoraSessionManager + /api/session/*；旧 /api/daemon/* 内部
+  转发零破坏；状态 = coordinator 连通性（外部会话可见可停）
+- runtime.rs: 数据流统一 coordinator（dora start/stop --name studio-<id>，
+  重名冲突延迟重试，stdin null 强制 detach）；版本门拒绝 0.5
+- recording.rs: 帧流录制（dora record -o out/recordings/<ts>.drec），
+  截断容错帧数扫描；/api/recording/capture|stop|list
+- 前端：Dashboard 会话控制（pill/确认弹窗/版本门提示）、Run Monitor
+  （会话条/自定义 YAML 路径/Record UI/录制列表/Open in Replay 跳
+  VisualizationView 的 openReplayFromRecording）、App.vue 左下角全局
+  Stop session 按钮、session-ui.ts 纯状态机（tools 测试覆盖）
+
+M17 版本管理（3 commit）:
+- dora_env.rs 扩展: settings store（~/.config/dora-studio/settings.json，
+  首次播种 env/PATH/~/.venvs/*/~/.local/bin）+ detect_versions +
+  switch/add/delete + 版本缓存失效（热切换联动 M16.5 生命周期门）
+- 端点: GET /api/dora/versions、POST /api/dora/{switch,candidates/add,
+  candidates/delete}
+- Dashboard 环境卡: 收起式（details + summary，chevron + 中英提示）、
+  兼容/降级徽章、点选切换、env 覆盖禁用、添加/删除候选
+
+== 本次会话踩坑（新 AI 必读）==
+- **dora 1.0 `dora list --format json` 是 JSON Lines**（每条记录一行
+  独立对象，0 条=空输出，1 条=单对象）——session.rs 的 parse_list_entries
+  与 coordinator.rs 的 parse_list_output 已三格式兼容（NDJSON/数组/单
+  对象），新增解析代码时别假设数组
+- **dora start 必须 stdin null**：继承终端 stdin 会进入 attach 模式挂住
+  （runtime.rs build_start_command 已加，加新 spawn 时记得）
+- **dataflows 发现用 CARGO_MANIFEST_DIR 优先**（workspace_root()），
+  不依赖启动 cwd
+- **cargo test 必须在无 coordinator/daemon 时跑**：metrics 测试 spawn
+  真实 dora，环境不匹配会假失败；且 metrics 的 CLI 测试现在持
+  TEST_ENV_LOCK（dora_env.rs 里），所有改 DORA_STUDIO_DORA_BIN 或
+  settings 的测试必须用这把锁
+- 测试残留进程要清理（dora down + kill 后端），否则下次 cargo test 失败
+- 前端 tools 测试是 tsx/node 环境（无 DOM），纯函数放 session-ui.ts
+  之类的独立模块；样式只用主题 token（--text-*/--bg-*/--card-*/
+  --hairline/--accent-*），禁 --col-*；正文 ≥12px
+
+== 关键约定（必须遵守）==
+1. 直接交流用中文；GitHub 内容（commit/PR/issue）必须英文、不带
+   Claude/AI 联合署名
+2. TDD：先写失败测试再实现；测试跑器必须 await 异步测试
+3. 只显式 git add 自己的文件；plans2.0/、docs/superpowers/、HANDOFF*、
+   out/ 等本地文件绝不提交；不自动提交（学生明确要求时才提交）
+4. 无 protoc、无 reqwest 等重依赖（RUST-COMPAT.md 有依赖钉死表）
+5. 不要动：api.ts 既有端点语义、ReplayTimeline
+6. 每完成一个重要模块暂停让学生手动验收
+
+== 学生决策（2026-08-19 记录）==
+- 下一步只有 M18；M16 LeRobot Interop 与 M14 Tauri **全部搁置**，不要开始
+- 延期问题（单球碰撞、B601 卡顿、ur5e reshape、后端偶发 flaky、
+  daemon 路由退化 issue）**搁置**，不要花时间
+- **PR 与合并策略：M18 完成后单独描述处理**——不要提前准备 PR；最终
+  方向是全部模块合并为单个 "week12" PR 覆盖 main，细节 M18 后再说
+- worktree 里 8 个 backend 文件（coordinator_ws.rs、drec/*、lerobot.rs、
+  live.rs、model_catalog.rs、profile.rs、protocol/types.rs）有纯格式化
+  残留修改（上上代 rustfmt 副作用，不属于任何模块）——M18 后处理 PR
+  时再决定去留，不要动它们
+
+== 基线（当前全绿，不能低于）==
+- cargo test --manifest-path backend/Cargo.toml  # 240 单测 + 1 集成
+  （须无 coordinator/daemon 运行；偶发 flaky 重跑即可）
+- npm --prefix frontend run test:tools          # 含 session-ui 状态机测试
+- npm --prefix frontend run build               # vue-tsc + vite
+- cargo fmt --check、git diff --check
+
+祝顺利。

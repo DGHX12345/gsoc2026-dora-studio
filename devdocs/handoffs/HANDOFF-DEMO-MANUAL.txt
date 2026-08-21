@@ -1,0 +1,100 @@
+dora-studio 交接说明 — 编写 Final Report 演示手册
+
+你是接手的新 AI。项目是 dora-studio：为 dora-rs 构建的本地 Web GUI（GSoC 2026），
+用于可视化、运行、调试 DORA 机器人应用。学生即将参加 GSoC Final Report，
+需要一份**演示手册**：告诉学生每一步做什么、怎么演示每个模块、用了什么技术、
+体现 dora 的什么价值。
+
+== 开始前必读（按顺序）==
+1. 本文件（先读完再动手）
+2. HANDOFF.md（工作目录根）— 权威模块记录：M00-M13、M11.5、M15 每个模块的
+   目标/关键决策/新增文件/测试/演示文件，手册的"技术"与"价值"部分以它为准
+3. plans2.0/OVERVIEW.md — 模块堆栈（Layer 0-6）、模块总表
+4. CLAUDE.md — 项目简介、架构、API 面
+5. 如需要 M15 细节: plans2.0/M15-live-planning-simulation.md 与 HANDOFF-M15.txt
+
+== 工作目录与环境 ==
+- /home/dora/gsoc2026-dora-studio/.claude/worktrees/week12-b（分支 week12-2.0，
+  HEAD b52aa09；plans2.0/、HANDOFF* 等本地文件绝不提交）
+- 后端: cargo run --manifest-path backend/Cargo.toml → 127.0.0.1:3001
+- 前端: npm --prefix frontend run dev → localhost:5173
+- M15 venv: /home/dora/.venvs/dora-studio（python3.11 + dora-rs 0.5.0）
+- 手册内所有运行步骤必须按"先起后端、再起前端、再按需起 dora"的顺序写清楚
+
+== 手册必须覆盖的模块（全部已完成，除标注）==
+
+核心页面（早期/基础）:
+- Dashboard 总览（系统状态、快速开始、daemon 开关）
+- Dataflow Explorer（YAML 图浏览、源文件查看、DataflowCanvas 可视化编辑器
+  M01、Schema 类型检查 M02、Runtime 绑定 M03：节点状态/热重载/运行）
+- Run & Monitor（dora run 子进程管理、节点表、启动/停止 M03）
+- Logs & Events（三级日志查看 + 原始流）
+- Metrics / Performance（节点 CPU/内存指标 M07、OTel 火焰图 M08、
+  M11.5 按需监测开关——默认关、主/分开关、WS 数据源回退）
+- Replay Timeline（M04 .drec 解析器+索引、M05 时间轴回放）
+
+机器人侧:
+- Visualization 视口（M06 3D 同步、Live/Replay 模式、浮动回放条、
+  NanoRobotViewer 按需渲染）
+- M09 VLM/LLM 归因条（摄像头帧→提示词→LLM 回复→动作→执行 的因果链）
+- M10 LeRobot 数据集（Parquet 经 Python 桥解析、Profile YAML 字段映射、
+  B601 真实数据端到端）
+- M11 工具槽协议（工具注册/挂载/端口订阅广播/推荐引擎、TF 树）
+- M12 dviz 路径工具（2px 路径线、costmap 平面、目标点、数据流推荐、
+  stale 徽章）
+- M13 MoveIt Bridge（轨迹/幽灵姿态/当前姿态/黄色碰撞线框、工具自带 URDF
+  加载器——B601 模型替换 nano、独立轨迹播放器、模型选择器）
+- M15 Live Planning & Simulation（Phase A 随 M13 已交付；Phase B 全部完成:
+  环境 spike、studio_bridge 节点、/api/live 实时 API、LiveFeed 前端、
+  examples/live-demo 真实 A* 规划数据流、Motion Planner 规划控制台——
+  Plan/Execute/Stop/Auto/场景箱子增删/规划器选择/实时状态）
+
+未完成（手册中不要写成已完成；可加"路线图"小节）:
+- M15 Phase C（mujoco 物理镜像 + 避障）— 进行中
+- 专用机械臂 viewer（Motion Planner 页独立 arm viewer，学生后置）
+- M14 Tauri 桌面打包、M16 LeRobot 互操作 — 未做
+- M11.5 D3 内置 OTLP 接收器 — 未实施
+
+== 演示数据清单（手册演示步骤要用）==
+- /tmp/dora-studio-tests/sample.drec — 200 条 4 节点（M05/M06 回放基础）
+- /tmp/dora-studio-tests/joint_animation.drec — 132 帧 6 关节正弦（视口动画）
+- /tmp/dora-studio-tests/attribution_demo.drec — 40 链 VLM 归因（M09）
+- /tmp/dora-studio-tests/tool_demo.drec — 120 帧图8路径+TF+关节（M11/M12）
+- /tmp/dora-studio-tests/moveit_demo.drec — 120 帧 moveit 全流（M13，cargo
+  test 自动重新生成）
+- /tmp/dora-studio-tests/lerobot_demo_v{1,2} — 合成 LeRobot（M10）
+- /home/dora/.cache/huggingface/lerobot/my_org/b601_pilot_v1 — B601 真实数据集（M10）
+- examples/live-demo/ — 真实 A* 规划数据流（M15 Phase B，需 dora 运行）
+- examples/planner-demo/dataflow.yml — 结构示例（M12 推荐演示）
+
+== 实时演示（M15）的运行要点 ==
+- dora 启动必须: source /home/dora/.venvs/dora-studio/bin/activate && dora up
+  （不带 VIRTUAL_ENV 会用错 python；dora up 前台挂住属正常）
+- cd examples/live-demo && dora start --name live-planning dataflow.yml
+- 前端 Visualization: Live 模式 → 顶栏「实时数据」开 → Tools 挂 dviz-path
+- Motion Planner: 目标 x/y/z → Plan（规划一次）→ Execute（机械臂运动）→
+  Stop（回 home）→ Auto（轨道演示）；场景 + 添加箱子；模式 pill 指示
+- 后端与前端各占 3001/5173；遗留进程占端口先查 ss -tlnp
+
+== 手册结构要求（每个模块一节）==
+1. 演示目标（一句话：让观众看到什么）
+2. 准备（依赖、启动什么、数据文件路径）
+3. 演示步骤（编号、精确点击路径、预期画面/数值）
+4. 技术要点（用什么实现：Rust/axum、Vue3+Three.js、dora CLI/WS、A*、
+   URDF 解析等——以 HANDOFF.md 记录为准，不编造）
+5. dora 价值（对应到 dora 生态：dataflow 范式、协调器/守护进程、录制回放、
+   实时数据面、dviz/moveit2/mujoco 生态对接、可观测性等）
+6. 演示时间建议（每模块 1-3 分钟，总时长给出编排建议）
+最后加: 完整演示顺序建议（从 Dashboard 到 M15 的叙事线）、常见故障排查
+（端口占用、dora 环境、数据流状态）、诚实性说明（哪些是合成演示数据、
+哪些是真实计算、哪些标 unavailable）
+
+== 硬性约定 ==
+- 直接交流用中文；手册正文中文（供学生自己演示用），GitHub 内容才用英文
+- 不伪造：手册中"技术"与"能力"描述必须与 HANDOFF.md 记录一致，拿不准的
+  写"以代码为准"，绝不虚构功能
+- 手册是本地文档（放 plans2.0/ 或根目录均可，不提交 upstream），文件名建议
+  DEMO-MANUAL.md 或 plans2.0/demo-manual.md
+- 手册步骤必须可复现：写完后自己按步骤核一遍命令是否存在、路径是否正确
+
+祝顺利。

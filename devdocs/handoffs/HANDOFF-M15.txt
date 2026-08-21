@@ -1,0 +1,156 @@
+dora-studio 交接说明 — 从 M15 Phase C 继续
+
+你是接手的新 AI。项目是 dora-studio：为 dora-rs 构建的本地 Web GUI（GSoC 2026），
+用于可视化、运行、调试 DORA 机器人应用。学生已获 Final 延期至 2026-11-02。
+
+== 开始前必读（按顺序）==
+1. 本文件（先读完再动手）
+2. HANDOFF.md（工作目录根）— 完整架构与 M00-M13 模块记录（M13 关键决策必读）
+3. plans2.0/M15-live-planning-simulation.md — M15 计划（含 Phase C 全部内容 +
+   2026-08-16 学生决策附录；你的任务从 Phase C 开始）
+4. plans2.0/OVERVIEW.md — 模块总表、风险登记
+5. plans2.0/M13-moveit-bridge.md — M13 记录（Phase A 内容、工具槽/URDF 管线复用点）
+
+== 环境 ==
+- 工作目录: /home/dora/gsoc2026-dora-studio/.claude/worktrees/week12-b （必须是这个 worktree）
+- 分支: week12-2.0（HEAD b52aa09，M15 Phase B 已全部提交；plans2.0/、HANDOFF* 等本地文件绝不提交）
+- Rust 1.75（edition 2021）；默认 python3 = 3.10
+- M15 venv: /home/dora/.venvs/dora-studio（python3.11 + dora-rs==0.5.0 + dora-rs-cli==0.5.0
+  + dora-moveit editable + numpy/scipy/pyarrow）。dora CLI 0.5.0 与 pip 包版本匹配，
+  不存在交接文档旧说的版本不匹配问题
+- 后端: cargo run --manifest-path backend/Cargo.toml → 127.0.0.1:3001
+- 前端: npm --prefix frontend run dev → localhost:5173
+- 验证基线（当前全绿，不能低于）:
+  cargo test --manifest-path backend/Cargo.toml            # 153 单测 + 1 集成
+  /home/dora/.venvs/dora-studio/bin/python -m unittest test_costmap_source \
+    test_simple_planner test_trajectory_executor test_studio_console \
+    （在 examples/live-demo/nodes 下）                        # 41 测试
+  npm --prefix frontend run test:tools                     # 203+2+11+8 全绿
+  npm --prefix frontend run build                          # vue-tsc + vite
+- 注意: 停止后端要确认进程真正退出（遗留二进制占 3001 端口；前端 5173 同理）
+- 已知: 后端测试偶发 flaky（~1/70，metrics/otel 时序，勿花时间追查，重跑即可）
+
+== dora 运行要点（踩过的坑）==
+- dora up 必须带 VIRTUAL_ENV，否则 daemon 用 `uv python find` 找到的 uv 托管
+  python（无依赖）跑节点:
+    source /home/dora/.venvs/dora-studio/bin/activate && dora up
+  dora up 前台会挂住不退出，属正常，留它在后台跑
+- dora start 会在数据流目录生成 out/dataflow-dora-session.yml 会话产物；
+  Studio 后端扫描已跳过 out/ 目录（勿改回）
+- dora stop 后立即 start 同名会报 "already a running dataflow"（名字释放有延迟），
+  等 2-3 秒或用新名字
+- dora logs 只能查运行中的 dataflow；`dora start --detach` 后台运行
+
+== 当前状态（M15 Phase B 已全部完成并人工验证）==
+- M00-M13 + M11.5 完成（见 HANDOFF.md）。M15 Phase A 随 M13 交付
+- M15 Phase B 提交序列（在 b52aa09 及之前）:
+  - B1 环境 spike: venv + dora-rs 0.5.0 匹配、示例 dataflow 端到端跑通
+  - B2 studio_bridge 节点（backend/scripts/studio_bridge.py + 12 测试）:
+    dora 节点订阅端口、POST {node_id, output_id, timestamp, payload} 到
+    /api/live/ingest；事件 metadata 含 sender 参数（num_waypoints 等）+ HLC
+    时间戳（datetime 对象！）；uint8 JSON 自动解析
+  - B3 后端 live API（backend/src/live.rs）: 每流环形缓冲（4096/流、64 流上限）、
+    GET /api/live/recent?stream=&since_ts=&limit=（since_ts 严格取新）
+  - B4 LiveFeed（frontend/src/live-feed.ts + 11 测试）: 100ms 轮询 → ToolBatch →
+    toolRegistry.broadcastBatch，M12/M13 工具零改动渲染直播；ToolPayload 加了
+    可选 metadata 字段；Visualization 顶栏「实时数据」开关（默认关）
+  - B5 真实数据流（examples/live-demo/）: costmap_source（合成传感器，标注演示）→
+    simple_planner（真实 A* 规划：避障 + 视线平滑）→ trajectory_executor（五次样条
+    演示执行器，标注无物理）→ studio_bridge。41 个 python 测试
+  - B6 控制台: 后端命令队列（POST /api/live/command + GET 带 since_seq/next_seq
+    重启检测协议；seq 从 1 起——seq 0 对轮询者不可见是踩过的坑）；studio_console
+    节点轮询转发（plan→target_point+mode_command、execute/stop→execute_command、
+    auto→resume_command、scene→scene_command）；MotionPlannerView 演化为控制台
+    （目标输入/Plan/Execute/Stop/Auto/加删箱子/规划器选择器/状态 pill/模式指示/
+    命令发送反馈）；控制台优先语义（轨道目标默认关，Plan 规划一次，Auto 才开轨道）；
+    VisualizationView 与 MotionPlannerView 用 v-show 常驻（切页不重置）
+
+== 学生决策（必须遵守）==
+- 模块分工: Visualization = 底盘/世界视角（路径、costmap、nano 模型）；
+  Motion Planner = 机械臂控制台。两页不得共用 MoveIt 工具实例（单实例单场景，
+  谁先挂谁赢会互相破坏——已踩坑回退）
+- 专用机械臂 viewer（后置项，见 M15 计划附录）: 控制台页新建独立 arm viewer，
+  直接复用 tools/moveit/urdf 纯函数模块（loadUrdfRobot/buildRobotModel），
+  不走工具注册表；带模型选择器（GET /api/models 已支持多模型发现）
+- 不伪造数据: 合成数据必须标注 demo；拿不到的真实数据标 unavailable
+- 每个重要模块完成后暂停，让用户手动测试
+
+== 你的任务: M15 Phase C（约 1 周，计划标注"时间允许才做"，学生已确认要做）==
+- C1 mujoco 镜像: 数据流接入 dora-mujoco，joint_positions 经 studio_bridge 流入
+  视口，机器人按物理运动（≥20Hz 验收）
+  - dora-mujoco 位置: /home/dora/dora-moveit/dora-mujoco/（bundle 仓库内，
+    pip 包名 dora-mujoco，依赖 mujoco>=3.1.6 + robot_descriptions；注意计划里
+    dora-moveit2 示例 YAML 引用的 ../../../dora-mujoco/main_viewer.sh 不存在，
+    实际入口是 dora_mujoco/main.py，YAML 路径需自行修正）
+  - dora-moveit2 完整示例（ur5e_example_mujoco.yml）依赖它；也可先最小复现
+- C2 避障: dora-moveit2 碰撞检测是 stub（planner 里 return True，见 M13 审计），
+  需在本地仓库补（FCL 集成）或用 costmap 算法演示避障（B5 的 A* 已具备）
+- C3 验收: 机器人沿规划路径运动、物理精确关节状态、障碍可见避让
+- 联动: 执行器→mujoco 控制输入→物理→joint_positions 回传→Studio 渲染；
+  B5 的 trajectory_executor 是演示替身，Phase C 用真 mujoco 替代（标注保留诚实性）
+
+== 关键约定（必须遵守）==
+1. 直接交流用中文；GitHub 内容（commit/PR）必须英文，不带 Claude/AI 联合署名
+2. TDD；每完成一个重要模块暂停让用户手动测试
+3. 只显式 git add 自己的文件；plans2.0/、HANDOFF* 等本地文件绝不提交
+4. 前端无 UI 框架（Vue 3 纯 CSS）；样式只用主题 token（--text-*/--bg-*/--card-*/
+   --hairline/--accent-*），禁止 --col-*；正文不小于 12px；面板控件浅色主题用黑色
+5. i18n 中英双语，中文优先（frontend/src/i18n.ts）
+6. 不要动: api.ts 既有端点语义、ReplayTimeline
+7. 测试跑器必须 await 异步测试（曾因同步跑器假绿埋雷）
+
+== 已知问题 ==
+- B601 模型 165 万顶点 + 幽灵克隆卡顿（学生接受延期；选项: 减面/骨架幽灵/播放隐藏幽灵）
+- ur5e（6 关节）选中时 dviz xyz 流长度整除 6 可能误 reshape（M15-B 带 metadata 无此问题）
+- 后端偶发 flaky 测试（见上）
+- MoveIt 工具单实例限制（见学生决策；专用 viewer 后置）
+
+祝顺利。
+
+== M15 Phase C 完成记录（2026-08-17，接任 AI 已交付）==
+
+全部完成并验证：C1 mujoco 物理镜像、C2 避障（真实碰撞）、C3 验收、
+C4（50ms 轮询，20Hz 达标）。
+
+提交序列（studio 仓库 week12-2.0，b52aa09 之后）:
+  c75d601 骨架 + 节点 wrapper           db69995 数据流 + arm_joints 过滤
+  ba8c159 moveit_console + 测试          ee43a99 模型选择器重载修复
+  d8a6be2 门控执行器 + 测试             b9ca4c2 箱子位置可编辑
+  95fd6c3 live/recent 最新优先修复       a565a6d 桥时间戳容错
+  8d17a07 零位形 HOME + console 等待关节状态
+  e13199f 历史命令跳过/remove 归一化/插值减速
+  436c79d LiveFeed 50ms
+
+外部仓库:
+  dora-moveit2: 1a9dd61（碰撞 stub 解除）+ ad1a1c5（DH FK/去 padding/
+    planning_scene config 修复）；YAML 路径修复未提交（用户决定）
+  dora-mujoco（bundle，无 git）: 本地修复 6 值指令崩溃 + 回归测试
+
+测试基线（当前全绿）:
+  cargo test                      154 + 1
+  B5 python                       46
+  moveit-live-demo python         37（console 21 / gate 12 / arm 4）
+  studio_bridge python            14
+  frontend test:tools             225（204 tools + 2 + 12 live-feed + 8 live-command）
+  npm run build                   ✓
+
+关键知识（接手必读）:
+- live.rs recent() 已改最新优先（升序+truncate 曾返回最旧帧——测量假象
+  曾误导排查一整天）
+- daemon 路由退化 bug（已报社区 issue）: daemon 长跑 + 多次数据流起停后
+  某节点输出停止到达部分订阅者；dora destroy && dora up 恢复
+- 命令回放: console 启动水位 = next_seq-1（恰好 next_seq 会触发重启检测
+  归零导致全量回放，旧 stop 会杀执行）
+- 执行提前回 HOME 两因: 历史 stop 回放（已修）+ 插值过快物理滞后
+  （0.05/航点 ≈1s）
+- mujoco ur5e qpos 21 维: ball(7)+臂(6)+夹爪(8)，臂在 [7:13]；执行器前
+  6 个是臂关节；arm_joints 过滤节点负责切片
+- dora-mujoco: MODEL_NAME 用本地 models/ur5e.xml（robot_descriptions 的
+  mujoco_menagerie 缓存克隆曾失败）；视口 URDF 从 ur_description xacro
+  渲染（视觉网格用碰撞 STL——.dae 不被 M13 loader 支持）
+- 已知限制（用户决定延期，写入 M15 计划）: 每连杆单球碰撞模型，真实连杆
+  体积覆盖不足（关节 3 臂可穿箱）；后续方案见计划文件
+- 演示启动: dora up（带 VIRTUAL_ENV）→ cd examples/moveit-live-demo →
+  dora start dataflow.yml --name moveit-live；B5 live-planning 不可同时跑
+  （共享命令队列 + 污染 joint_positions）
+- PYTHONPATH 含 ROS humble 路径（/opt/ros/humble），跑测试用 env -u PYTHONPATH

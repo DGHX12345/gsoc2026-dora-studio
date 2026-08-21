@@ -1,0 +1,98 @@
+dora-studio 交接说明 — 从 M15 继续
+
+你是接手的新 AI。项目是 dora-studio：为 dora-rs 构建的本地 Web GUI（GSoC 2026），
+用于可视化、运行、调试 DORA 机器人应用。学生已获 Final 延期至 2026-11-02。
+
+== 开始前必读（按顺序）==
+1. 本文件（先读完再动手）
+2. HANDOFF.md（工作目录根）— 完整架构、M00-M13 全部已完成模块记录（含关键决策）
+3. plans2.0/M15-live-planning-simulation.md — 你的任务：M15 Live Planning & Simulation
+   （已确认必要编码；Phase A 已随 M13 交付；Phase B/C 待做）
+4. plans2.0/OVERVIEW.md — 模块总表、风险登记
+5. plans2.0/M13-moveit-bridge.md — M13 完整记录（Revision R1 审计修正、D4/D7 决策、
+   已知问题）—— M15 大量复用 M13 的工具槽/URDF/直播管线
+
+== 环境 ==
+- 工作目录: /home/dora/gsoc2026-dora-studio/.claude/worktrees/week12-b （必须是这个 worktree）
+- 分支: week12-2.0（HEAD a406469，M13 已全部提交；plans2.0/、HANDOFF* 等本地文件勿提交）
+- Rust 1.75 (edition 2021)、默认 python3 = 3.10（本机另有 python3.11/3.12 + uv + conda，M15 用）
+- 后端: cargo run --manifest-path backend/Cargo.toml  → 127.0.0.1:3001
+- 前端: npm --prefix frontend run dev  → localhost:5173
+- 验证基线: cargo test --manifest-path backend/Cargo.toml && npm --prefix frontend run test:tools && npm --prefix frontend run build
+  （当前 134 后端单测 + 1 集成 + 204 前端工具测试全绿，不能低于它）
+- 注意: 停止后端要确认进程真正退出（遗留二进制会占 3001 端口）
+- 已知: 后端测试有极低概率偶发失败（~1/70，未定位，疑似 metrics/otel 时序测试；
+  M12/M13 diff 无时序改动）。偶发一次重跑即可，勿花时间追查。
+
+== 当前状态 ==
+- M00-M13 全部完成并人工验证。M13（MoveIt Bridge）10 个提交（58564e5..a406469）：
+  - D1 flat 载荷解析器（6 端口；trajectory 支持 envelope 与扁平 reshape）
+  - D2 平行坐标关节空间图（FK 回退可视化；视锥回归测试锁定相机盲区位置）
+  - D3 关节名配置（ur5e/gen72/b601，B601 名已从 URDF 核实）
+  - D4 工具自带 URDF 加载器（最小 XML 解析器 + 关节树 FK + STL + package:// 重映射；
+    B601 本地 models/b601/ 约 27MB 已 gitignore）；EE 路径（蓝红渐变 Line2）、
+    幽灵姿态（默认 5）、当前姿态（joint_positions 驱动）
+  - D4.1 M10 联动: previewPose()；lerobot 源预览切 B601（夹爪 56.8° 线性映射到
+    URDF 限位 0-0.0715m — 注意交接文档曾写 0.0285，实为 0.0715，已按实际修正）
+  - D5 碰撞场景黄色线框 + 附着物挂 link + 包围球碰撞对
+  - D6 控制面板: 模型选择器（后端 GET /api/models 动态发现 models/*/*.urdf）、
+    独立轨迹播放器（播放/暂停/0.5-2×/步进/同步时间轴开关）、关节表、EE 读数、
+    碰撞开关、幽灵滑块、规划/执行状态
+  - D7 协同可视化回归测试（两工具共享 trajectory 端口互不误解析）
+  - 关键修复: mountRobot dispose 顺序（加载必崩）、幽灵销毁误删共享几何（GPU 每帧重传）、
+    测试跑器不 await 异步断言（假绿）、v-show 藏画布黑屏（改 modelVisible prop）、
+    onDetach 清空监听器导致卸载→重挂载后 nano 不再隐藏（已移除 clear）
+  - 用户决策: 工具挂载即隐藏 nano 模型（任意加载状态）；面板控件文字浅色主题用黑色
+- 演示数据: /tmp/dora-studio-tests/moveit_demo.drec（120 帧：moveit 全流 + dviz
+  waypoints/target/costmap；cargo test 自动重新生成）
+- 已知问题（学生接受延期）: B601 模型 165 万顶点 + 幽灵克隆 ≈ 千万级顶点/帧，集成
+  显卡卡顿。修复选项已列入 M13 计划：离线减面 / 骨架幽灵 / 播放时隐藏幽灵
+
+== 你的任务：M15 Live Planning & Simulation ==
+计划已含架构决策与 Phase 分解。M13 已交付 Phase A（回放式规划可视化）。待做：
+- Phase B1 环境 spike: uv venv + python3.11 + 匹配的 dora-rs python 包
+- Phase B2 studio_bridge 节点（Python，订阅端口 POST 到后端 /api/live/ingest）
+- Phase B3 后端 live API（backend/src/live.rs，环缓冲 + 最近查询）
+- Phase B4 LiveFeed 前端（复用 toolRegistry.broadcastBatch，M13 工具零改动渲染直播）
+- Phase B5 端到端演示；Phase B6 Motion Planner 页面演化为规划控制台
+- Phase C（可选，时间允许）: mujoco 物理镜像 + 碰撞补全（dora-moveit2 外部仓库）
+- 另: M11.5 D3（内置 OTLP HTTP 接收器，prost 预检已过）时机在 M13 之后、Final 演示前
+- M14（Tauri 桌面打包，plans2.0/M14-tauri-integration.md）仍立项未做：排期缓解策略
+  （19.5 周 > 12 周）将其置于 v2.0 之后；与 M15 的先后由每周同步定。是否 Final 前做
+  需学生/导师确认，勿擅自开工。
+
+== M13 必须遵守的模块分工（2026-08-14 学生决策，M15 继续适用）==
+- Visualization 视口: 唯一 3D 渲染面，工具挂载在这里（M13 已实现 B601 替换 nano）
+- Motion Planner 页面: 规划控制台（M15-B6 接线，此前只读）
+- 工具面板侧栏: 只做回放/查看控制（M13 面板已按此实现）
+
+== 关键约定（必须遵守）==
+1. 直接交流用中文；GitHub 内容（commit/PR）必须英文
+2. 不伪造数据 — 拿不到真实数据明确标 unavailable，绝不编造
+3. TDD；每完成一个重要模块后暂停，让用户手动测试，测试通过再继续
+4. commit 不要带 Claude/AI 联合署名；每任务一提交；英文 commit message；
+   只显式 git add 自己的文件（plans2.0/、HANDOFF* 等本地文件绝不能提交）
+5. 前端无 UI 框架：Vue 3 纯 CSS；UI 组件要大、清晰（用户多次反馈对比度，
+   浅色主题面板控件文字用黑色 --text-primary）
+6. 样式只用主题 token（--text-*/--bg-*/--card-*/--hairline/--accent-*），
+   禁止 --col-*（已移除）；深色面板正文用 --text-body/--text-heading，
+   --text-muted-dark 只用于次要提示；正文不小于 12px
+7. i18n 中英双语，中文优先，词条在 frontend/src/i18n.ts
+8. 不要动: api.ts 的既有端点语义、ReplayTimeline
+9. 测试跑器必须 await 异步测试（M13 曾因同步跑器假绿埋雷）
+
+== 技术约束 ==
+- 不能 link dora crates（dora 需 Rust 1.88/edition 2024，本机 1.75）— 类型复制策略见 plans2.0/RUST-COMPAT.md
+- 不加重依赖：后端现有 axum/serde/tokio/uuid/chrono/sha1/getrandom
+- 本机跑不了真实 dora dataflow（Python 3.10 默认）— M15 B1 spike 先解决环境
+- 源码参考: dora 核心 /home/dora/dora；dviz /home/dora/dviz；dora-moveit2 /home/dora/dora-moveit2
+- B601 URDF 已复制到 models/b601/（勿提交）；Vite 无 /models 代理，前端须用
+  BACKEND_BASE_URL 绝对地址（api.ts 导出）
+
+== 测试模式 ==
+- 纯 TS 逻辑用 tsx 单测（frontend/src/tools/*.test.ts + tools/tests.ts 聚合注册；
+  npm run test:tools 还会跑 src/playback.test.ts）
+- 后端用 cargo test；前端 .vue 靠 npm run build（vue-tsc）把关
+- TDD：先写失败测试 → 最小实现 → 重构；测试跑器必须 await 异步 test.run()
+
+祝顺利。

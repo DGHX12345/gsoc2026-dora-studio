@@ -1,0 +1,104 @@
+dora-studio 交接说明 — 从 M16.5 开始（2026-08-17 写）
+
+你是接手的新 AI。项目是 dora-studio：为 dora-rs 构建的本地 Web GUI
+（GSoC 2026），用于可视化、运行、调试 DORA 机器人应用。学生已获 Final
+延期至 2026-11-02。M15.5（dora 1.0 升级）与 M15.6（OTLP gRPC 接收器）
+已全部交付并验证，你的任务是 **M16.5 去终端化（计划已批准，开始实施）**。
+
+== 开始前必读（按顺序）==
+1. 本文件（先读完再动手）
+2. plans2.0/M16.5-terminal-free-ops.md — 你的任务计划（学生逐节确认过；
+   两 PR 节奏：PR1 生命周期 D1-D3，PR2 录制 D4-D5；交付记录、验收清单、
+   风险表都在文件里）
+3. HANDOFF.md — M00-M18 完整架构与模块记录（含 M15.5/M15.6/UI 修复记录）
+4. plans2.0/M15.5-dora-10-upgrade.md 与 plans2.0/M15.6-otlp-grpc-receiver.md
+   — 刚交付两模块的完整交付记录与坑（必读）
+5. plans2.0/M17-dora-version-manager.md、plans2.0/M18-dataflow-explorer-2.md
+   — 后续模块计划（均已批准，只设计未实施；M16.5 完成后按此顺序继续）
+6. plans2.0/OVERVIEW.md — 模块总表、关键路径、风险登记
+
+== 环境 ==
+- 工作目录: /home/dora/gsoc2026-dora-studio/.claude/worktrees/week12-b
+  （必须是这个 worktree；分支 week12-2.0，M15.6 已全部提交）
+- Studio 后端用 Rust 1.75（edition 2021，系统 /usr/bin/cargo）；
+  dora 上游源码构建用 rustup 1.95.0（PATH=/home/dora/.cargo/bin:$PATH
+  RUSTUP_TOOLCHAIN=1.95.0，因 /usr/bin/cargo 1.75 遮蔽 rustup 代理）
+- 主 venv: /home/dora/.venvs/dora-studio-1.0（python3.11 + dora-rs==1.0.0rc4
+  + GitHub release 的 dora 1.0.0-rc.4 CLI 二进制装在 venv/bin —— **PyPI 的
+  dora-rs-cli rc1/rc2 wheel 是坏的**，勿装）+ dora-moveit2/dora-mujoco
+  editable + pytest/numpy/scipy/pyarrow；旧 venv /home/dora/.venvs/dora-studio
+  （0.5）保留作回退。uv 管理，无 pip
+- dora up 必须带 VIRTUAL_ENV + PATH 前置 venv/bin；0.5 的
+  ~/.dora/coordinator.redb 已备份为 .v2-backup（1.0 用 v3）
+- 后端: cargo run --manifest-path backend/Cargo.toml → 3001；
+  OTLP HTTP 4318；OTLP gRPC 4317（DORA_STUDIO_OTLP_GRPC_ADDR 覆盖）；
+  前端 npm --prefix frontend run dev → 5173
+- 验证基线（当前全绿，不能低于）:
+  cargo test --manifest-path backend/Cargo.toml     # 192 单测 + 1 集成
+  B5/M15/bridge python 测试（新 venv, env -u PYTHONPATH）  # 46+37+14
+  npm --prefix frontend run test:tools              # 204
+  npm --prefix frontend run build
+- **cargo test 必须在无 dora daemon 运行时跑**（metrics 测试 spawn PATH
+  上的 dora，版本不匹配即失败——环境敏感性，非回归）；后端偶发 flaky
+  （~1/70）重跑即可
+
+== 你的任务: M16.5 去终端化（计划已批准，学生确认开始实施）==
+
+目标: 日常操作零终端——一键起停 dora 会话（dora up/down）、数据流统一
+coordinator（dora start/stop --name）、帧流录制（Record/Stop UI，帧数，
+回放打开）。关键决策（已在计划 Revision 节）: 只支持 dora 1.0 + 版本门；
+DORA_STUDIO_DORA_BIN env > settings > PATH；新增 /api/session/*，旧
+/api/daemon/* 内部转发零破坏；状态检测 = coordinator 连通性（外部会话
+可见可停）；录制语义 = dora record 注入变体，停止即截断（M15.5 截断
+容错兜底）；Jaeger/dviz/moveit 一次性安装出圈（写 README）。
+
+交付: D1 dora_env.rs 二进制定位+版本门 → D2 session.rs + /api/session/*
+→ D3 runtime.rs 改 dora start/stop（PR1，人工验收）→ D4 recording.rs
+帧流录制控制器 → D5 前端会话控制 + Record UI + i18n（PR2，人工验收）
+→ D6 基线 + 验收清单。全部 TDD，细节步骤见计划文件。
+
+== 关键约定（必须遵守）==
+1. 直接交流用中文；GitHub 内容（commit/PR/issue）必须英文、不带
+   Claude/AI 联合署名
+2. TDD；每完成一个重要模块（PR1/PR2）暂停让学生手动测试
+3. 只显式 git add 自己的文件；plans2.0/、HANDOFF*、out/ 等本地文件绝不提交
+4. 前端无 UI 框架（Vue 3 纯 CSS）；样式只用主题 token（--text-*/--bg-*/
+   --card-*/--hairline/--accent-*），禁止 --col-*（已被移除，静默回退硬编码
+   浅色导致浅色主题不可见——已踩两次）；正文不小于 12px
+5. i18n 中英双语，中文优先（frontend/src/i18n.ts）
+6. 不要动: api.ts 既有端点语义、ReplayTimeline
+7. 测试跑器必须 await 异步测试
+8. 无 protoc、无 reqwest 等重依赖——M00 类型复制 + 手写最小实现策略
+   （RUST-COMPAT.md 有依赖钉死表: tonic 0.12.3 + indexmap =2.7.0）
+
+== 本会话踩坑（新 AI 必读）==
+- **cwd 陷阱（最危险）**: Bash 工作目录会被重置到主仓库
+  /home/dora/gsoc2026-dora-studio（旧代码）。一切 cargo/npm/git 命令要么
+  先 cd worktree，要么用绝对路径；曾两次把相对路径补丁打进主仓库、在
+  主仓库跑测试得假结果。动手前先 pwd 确认
+- 4317 曾被遗留 Jaeger 容器占用（已 docker stop，可 docker start 恢复；
+  gRPC 监听器占用时警告降级不退出——是特性不是 bug）
+- dora 1.0 的 WS 请求 params 是 ControlRequest 变体包装（"GetNodeInfo"
+  裸字符串 / {"Hello":{...}} / {"Reload":{...}}），回复是
+  {"NodeInfoList":[...]} 包装——coordinator_ws.rs 已适配，别改回裸形
+- dora 从不设置 OTel service.name（上游 PR 已提交: DGHX12345/dora 分支
+  fix/otel-service-name）；合并前 Studio 火焰图节点归因显示
+  unknown_service:python3.11 属预期
+- Studio 的 DORA_VERSION 常量（coordinator_ws.rs:31, "1.0.0-rc.4"）需与
+  安装的 dora 版本一致，上游发新版本时同步
+- 测试期间后端占用 3001 的遗留进程要确认真正退出（按端口 kill）
+
+== M16.5 完成后的顺序（计划已备，均只设计未实施）==
+1. M17 版本管理（检测+切换，热切换，settings 文件）→ 计划
+   plans2.0/M17-dora-version-manager.md
+2. M18 Dataflow Explorer 2.0（mentor 重点关注）→ 计划
+   plans2.0/M18-dataflow-explorer-2.md
+3. M16 LeRobot Interop（可选）→ M14 Tauri（后置项）
+
+== 遗留清单（学生确认）==
+- week12-2.0 与 main 合并策略 —— 待 mentor 同步（main 历史重写过）
+- 上游 PR 跟进（service.name；dora-moveit2 碰撞 stub/DH FK/YAML 路径——学生决定）
+- 已知延期问题: 单球碰撞、B601 卡顿、ur5e reshape、后端偶发 flaky、
+  daemon 路由退化 issue（已报社区）
+
+祝顺利。

@@ -1,0 +1,16 @@
+type_rules:
+  - from: std/core/v1/UInt8
+    to: std/core/v1/String
+nodes:
+  - id: sender
+    path: sender.py
+    outputs:
+      - data
+    output_types:
+      data: std/core/v1/UInt8
+  - id: recv
+    path: recv.py
+    inputs:
+      data: sender/data
+    input_types:
+      data: std/core/v1/String

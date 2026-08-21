@@ -1,0 +1,66 @@
+dora-studio 交接说明 — 从 M12 继续
+
+你是接手的新 AI。项目是 dora-studio：为 dora-rs 构建的本地 Web GUI（GSoC 2026），
+用于可视化、运行、调试 DORA 机器人应用。
+
+== 开始前必读（按顺序）==
+1. HANDOFF.md（工作目录根）— 完整架构、M00-M11.5 全部已完成模块的交接记录
+2. plans2.0/M12-dviz-path-tool.md — 你要做的 M12 详细计划（已含源码审计修正）
+3. plans2.0/OVERVIEW.md — 模块总表、风险登记
+
+== 环境 ==
+- 工作目录: /home/dora/gsoc2026-dora-studio/.claude/worktrees/week12-b （必须是这个 worktree）
+- 分支: week12-2.0（M11.5 已提交至 d600f69，git status 干净；plans2.0/、HANDOFF* 等本地文件勿提交）
+- Rust 1.75 (edition 2021)、Python 3.10、Node 可用
+- 后端: cargo run --manifest-path backend/Cargo.toml  → 127.0.0.1:3001
+- 前端: npm --prefix frontend run dev  → localhost:5173
+- 验证基线: cargo test --manifest-path backend/Cargo.toml && npm --prefix frontend run test:tools && npm --prefix frontend run build
+  （当前 123 后端单测 + 1 集成 + 54 工具 tsx 测试全绿，不能低于它）
+- 注意: 停止后端要确认进程真正退出（TaskStop 只杀 cargo 包装进程，遗留二进制会占 3001 端口）
+
+== 当前状态 ==
+- M00-M11.5 完成并人工验证。M11 工具槽协议（Layer 5 基础设施）+ M11.5 监测控制（D1 开关 + D2 WS 数据源）已提交。
+- **M11.5 D3 未完成**（重要，见下）：内置 OTLP HTTP 接收器。已与学生约定时机：M12 → M13 → D3。
+  预检已通过（prost 0.13 可在 Rust 1.75 编译；opentelemetry-proto 0.7 不可用；改用 prost-derive
+  手写最小 OTLP 类型，无 protoc）。做 D3 时直接按 plans2.0/M11.5-monitoring-control.md 的 R8 路径走。
+- 学生已获 Final Submission 延期至 2026-11-02，时间压力不大，但 M12/M13 是 proposal 核心交付。
+
+== 你的任务：M12 dviz Path Visualization Tool ==
+计划文件已含源码审计修正（dviz 是可视化消费者不是规划器；数据全是 flat Float32Array；
+端口名是 waypoints|path|trajectory|target_point|pose|costmap|esdf，没有 planned_path；
+dviz 无 costmap 需自建 ESDF 渲染）。先批判性审阅计划，发现与真实代码不符先与学生对齐
+（历次模块都有 "Revision 决策" 记录在计划文件里），然后 TDD，每完成一个重要模块暂停人工测试。
+
+== M12 必须知道的 M11 现状 ==
+- 协议文件: frontend/src/tools/types.ts（ViewportTool/ToolPayload/ToolContext/PortPattern）
+  **R9 修订**: onAttach 签名是 onAttach(context: ToolContext)，不是计划里的 onAttach(scene, camera)。
+  ToolContext = { scene, camera, requestRender } — NanoRobotViewer 按需渲染，工具必须用 requestRender 触发重绘
+- 注册表: tools/registry.ts（单例 toolRegistry，广播按 subscribePorts 匹配、工具间隔离）
+- 数据流: ReplayScene 每帧把 .drec 条目转 ToolBatch 广播（tools/feed.ts：JSON 数字数组→f32，
+  对象→json，其余→bytes；TF 载荷先进 SimpleTfTree）；演示 .drec 用 backend/src/drec/generator.rs 的
+  generate_tool_demo（图8 waypoints + trajectory + tf 链 + 关节动画）
+- 参考工具: tools/demo/WaypointEchoTool.ts + WaypointEchoPanel.vue — M12 实现 DvizPathTool 后
+  可替换/移除它（与学生确认）。panelComponent 在 tools/index.ts 的 registerBuiltinTools() 里绑定
+  （.vue 无法被 tsx 测试加载，工具类保持纯 TS），注册必须幂等
+- 测试模式: 纯 TS 逻辑用 tsx 单测（frontend/src/tools/*.test.ts，npm run test:tools）；
+  后端用 cargo test（TDD：先写失败测试→最小实现→重构）
+- 前端样式: 用主题感知 token（--text-primary/--text-secondary/--bg-surface/--border-card），
+  不要用 --col-*（week12 已移除、静默回退深色硬编码，浅色主题白底上不可见）
+- i18n: 中英双语，中文优先；词条在 frontend/src/i18n.ts
+
+== 关键约定（必须遵守）==
+1. 直接交流用中文；GitHub 内容（commit/PR）必须英文
+2. 不伪造数据 — 拿不到真实数据明确标 unavailable，绝不编造；M12 计划自带合成数据生成器方案
+3. TDD；每完成一个重要模块后暂停，让用户手动测试，测试通过再继续
+4. 不要改 Motion Planner 页面；Visualization 页面已多次打磨，只做必要小改
+   （M12 的工具挂载走 M11 协议，主改动在 tools/dviz/ 新目录 + ToolPanel 注册，不动视口本身）
+5. commit 不要带 Claude/AI 联合署名；每任务一提交；英文 commit message
+6. 前端无 UI 框架：Vue 3 纯 CSS；UI 组件要大、清晰（用户多次反馈）；深色科技感
+7. 用户会实际手动测试每个模块，代码要能独立演示
+
+== 技术约束 ==
+- 不能 link dora crates（dora 需 Rust 1.88/edition 2024，本机 1.75）— 类型复制策略见 plans2.0/RUST-COMPAT.md
+- 不加重依赖：后端现有 axum/serde/tokio/uuid/chrono/sha1/getrandom；M11.5 D3 预检后允许的例外是 prost 0.13
+- 本机跑不了真实 dora dataflow（Python 3.10 vs dora 需 3.11）— 真实数据验证受限时，空状态 UI 必须优雅
+
+祝顺利。

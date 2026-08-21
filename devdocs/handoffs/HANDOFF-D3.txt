@@ -1,0 +1,89 @@
+dora-studio 交接说明 — 从 M11.5 D3 继续（2026-08-17 写）
+
+你是接手的新 AI。项目是 dora-studio：为 dora-rs 构建的本地 Web GUI
+（GSoC 2026），用于可视化、运行、调试 DORA 机器人应用。学生已获 Final
+延期至 2026-11-02。M15（Live Planning & Simulation，含 Phase A/B/C）已
+全部交付并验证，你的任务是 **M11.5 D3：内置 OTLP HTTP 接收器**。
+
+== 开始前必读（按顺序）==
+1. 本文件（先读完再动手）
+2. HANDOFF-M15.txt — M15 Phase C 完成记录 + 近期踩坑（daemon 路由退化、
+   命令回放、recent 语义等，必读）
+3. HANDOFF.md — M00-M13 完整架构与模块记录
+4. plans2.0/M11.5-monitoring-control.md — 你的任务计划（D3 在 Phase 2）
+5. plans2.0/OVERVIEW.md — 模块总表、风险登记
+
+== 环境 ==
+- 工作目录: /home/dora/gsoc2026-dora-studio/.claude/worktrees/week12-b
+  （必须是这个 worktree；分支 week12-2.0，M15 Phase C 已全部提交）
+- Rust 1.75（edition 2021）；Node 18；默认 python3 = 3.10
+- M15 venv: /home/dora/.venvs/dora-studio（python3.11 + dora-rs==0.5.0 +
+  dora-rs-cli==0.5.0 + dora-moveit editable + dora-mujoco + mujoco 3.11
+  + robot-descriptions + pytest；venv 用 uv 管理，无 pip，装包用
+  VIRTUAL_ENV=/home/dora/.venvs/dora-studio .../uv pip install）
+- 后端: cargo run --manifest-path backend/Cargo.toml → 127.0.0.1:3001
+- 前端: npm --prefix frontend run dev → localhost:5173
+- 验证基线（当前全绿，不能低于）:
+  cargo test --manifest-path backend/Cargo.toml        # 154 单测 + 1 集成
+  B5:   cd examples/live-demo/nodes && env -u PYTHONPATH \
+        /home/dora/.venvs/dora-studio/bin/python -m unittest \
+        test_costmap_source test_simple_planner test_trajectory_executor \
+        test_studio_console                              # 46
+  M15:  cd examples/moveit-live-demo/nodes && 同上 \
+        test_moveit_console test_gated_executor test_arm_joints   # 37
+  桥:   cd backend/scripts && 同上 test_studio_bridge              # 14
+  npm --prefix frontend run test:tools                 # 225
+  npm --prefix frontend run build                      # vue-tsc + vite
+- 注意: python 测试必须 env -u PYTHONPATH（shell 里 PYTHONPATH 被 ROS
+  humble 污染）；后端偶发 flaky（~1/70，metrics/otel 时序，重跑即可）
+
+== 你的任务: M11.5 D3 — Studio 内置 OTLP HTTP 接收器 ==
+
+目标: Studio 监听 4318 作为 OTel 后端，dora 节点直接
+`OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318` 推送 spans，
+省掉 Jaeger 依赖，火焰图（M08）变为真正的推送模式。
+
+预检已通过（2026-08-13，写入计划 R8，勿重复验证）:
+- prost 0.13 可在 Rust 1.75 编译
+- opentelemetry-proto 0.7 不可用（edition 2024）
+- 实现路径已定: prost 0.13 + prost-derive 手写最小 OTLP 类型
+  （M00 类型复制策略，无 protoc），解码验证已通过
+- 入口: POST /v1/traces（OTLP/HTTP protobuf），前端消费沿用 M08 的
+  Jaeger 兼容查询端点（/api/otel/status、/api/otel/spans、/api/otel/trace）
+  或复用现有 OtelCollector 缓冲——按 M11.5 计划 D3 小节实施
+
+现有代码基础（必读）:
+- backend/src/otel.rs — OtelCollector（可启停、环形缓冲、span 树构建、
+  手写最小 HTTP 客户端含 chunked 解码）
+- backend/src/monitoring.rs — MonitoringController（MonitorTarget 枚举、
+  set_enabled/status）
+- backend/src/main.rs — /api/otel/* 三端点 + AppState 集成
+- M08 已人工验证 Jaeger 查询链路；D3 是加一条推送接收路径
+
+== 关键约定（必须遵守）==
+1. 直接交流用中文；GitHub 内容（commit/PR/issue）必须英文、不带
+   Claude/AI 联合署名
+2. TDD；每完成一个重要模块暂停让用户手动测试
+3. 只显式 git add 自己的文件；plans2.0/、HANDOFF* 等本地文件绝不提交
+4. 前端无 UI 框架（Vue 3 纯 CSS）；样式只用主题 token（--text-*/--bg-*/
+   --card-*/--hairline/--accent-*），禁止 --col-*；正文不小于 12px
+5. i18n 中英双语，中文优先（frontend/src/i18n.ts）
+6. 不要动: api.ts 既有端点语义、ReplayTimeline
+7. 测试跑器必须 await 异步测试（曾因同步跑器假绿埋雷）
+8. Rust 1.75 限制: 无 reqwest、无 tokio-tungstenite、无 memmap2、
+   无 tempfile crate（getrandom v0.4 需 edition 2024）——沿用"类型复制 +
+   手写最小实现"策略（RUST-COMPAT.md）
+
+== 
+
+== 完成 D3 之后的遗留清单（学生确认的优先级）==
+1. week12-2.0 与 main 的合并策略 —— 待 mentor 同步确认（main 历史重写过）
+2. M14 Tauri 集成（1.5 周，可放 v2.0 后）
+3. M16 LeRobot Interop（0.5 周，NON-ESSENTIAL，可跳过）
+4. dora-moveit2 修复提 PR 上游（碰撞 stub 解除 1a9dd61、DH FK ad1a1c5、
+   YAML 路径修复未提交——学生决定）
+5. 已知问题（延期，见 HANDOFF.md/M15 计划）: 碰撞模型每连杆单球近似
+   （关节 3 可穿障碍，方案已写入 M15 计划）、B601 播放卡顿、专用机械臂
+   viewer 后置项、ur5e dviz 流整除 6 误 reshape、后端偶发 flaky
+
+祝顺利。

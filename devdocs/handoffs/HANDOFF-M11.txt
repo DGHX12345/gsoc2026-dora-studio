@@ -1,0 +1,48 @@
+dora-studio 交接说明 — 从 M11 继续
+
+你是接手的新 AI。项目是 dora-studio：为 dora-rs 构建的本地 Web GUI（GSoC 2026），用于可视化、运行、调试 DORA 机器人应用。
+
+== 开始前必读（按顺序）==
+1. HANDOFF.md（工作目录根）— 完整架构、M00-M10 全部已完成模块的交接记录
+2. plans2.0/M11-tool-slot-protocol.md — 你要做的 M11 详细计划
+3. plans2.0/OVERVIEW.md — 模块总表、风险登记（含各模块 Revision 决策）
+
+== 环境 ==
+- 工作目录: /home/dora/gsoc2026-dora-studio/.claude/worktrees/week12-b （必须是这个 worktree）
+- 分支: week12-2.0（M09/M10 已提交，git status 干净；plans2.0/、HANDOFF.md 等本地文件勿提交）
+- Rust 1.75 (edition 2021)、Python 3.10、Node 可用
+- 后端: cargo run --manifest-path backend/Cargo.toml  → 127.0.0.1:3001
+- 前端: npm --prefix frontend run dev  → localhost:5173
+- 验证基线: cargo test --manifest-path backend/Cargo.toml && npm --prefix frontend run build
+  （当前 110 后端测试 + 1 集成全绿，不能低于它）
+
+== 当前状态 ==
+- M00-M10 全部完成并人工验证。M09 归因条（VLM 因果链）+ M10 LeRobot 数据集（真实 B601 数据端到端验证）构成 Layer 4 归因闭环。
+- 真实数据: /home/dora/.cache/huggingface/lerobot/my_org/b601_pilot_v1
+  （B601 = Seeed reBot Arm，7 自由度，角度单位是"度"，前端预览时 deg→rad 转换）
+- B601 模型已获取: /home/dora/reBotArmController_ROS2/src/rebotarm_bringup/description/（URDF + STL），
+  接入计划已写入 M13 计划的 D4.1，M11 不要碰
+
+== 关键约定（必须遵守）==
+1. 直接交流用中文；GitHub 内容（commit/PR）必须英文
+2. 不伪造数据 — 拿不到真实数据明确标 unavailable，绝不编造
+3. TDD：先写失败测试 → 最小实现 → 重构；测试风格见 backend/src 各模块的 #[cfg(test)]
+4. 每完成一个重要模块后暂停，让用户手动测试，测试通过再继续
+5. 不要改 Motion Planner 页面；Visualization 页面已多次打磨，只做必要小改
+6. M11.5（监测开关+WS 数据源）已立项未实施，只做 M11，不要动 M07/M08 的轮询
+7. commit 不要带 Claude/AI 联合署名；每任务一提交
+8. 前端无 UI 框架：Vue 3 纯 CSS，样式 token 在 styles.css；新页面走 App.vue 的 v-if 切换 + i18n.ts 中英双语（中文优先）
+9. UI 组件要大、清晰（用户历史反馈）；深色科技感（玻璃拟态、细边框）
+10. 用户会实际手动测试每个模块，代码要能独立演示
+
+== 技术约束（重要）==
+- 不能 link dora crates（dora 需 Rust 1.88/edition 2024，本机 1.75）— 类型复制策略见 plans2.0/RUST-COMPAT.md
+- 不加重依赖：项目用原始 TCP + 手动协议；M10 的 Parquet 解析用 Python 3 + pyarrow 子进程桥
+  （backend/scripts/lerobot_reader.py，JSON stdout、30s 超时、pyarrow 缺失优雅降级）— 这是既有模式
+- 本机跑不了真实 dora dataflow（Python 3.10 vs dora 需 3.11）— 真实数据验证受限时，空状态 UI 必须优雅
+
+== 你的任务：M11 Tool Slot Protocol（Layer 5 起点）==
+按 M11 计划执行：先批判性审阅计划（本项目的惯例是发现计划与真实代码/环境不符时先与学生对齐确认再动工，
+历次模块都有"Revision 决策"记录在计划文件里），然后 TDD 实现，每模块完成暂停人工测试。
+
+祝顺利。
