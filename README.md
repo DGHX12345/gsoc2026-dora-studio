@@ -138,7 +138,7 @@ Environment overrides:
   support, 0.5 = degraded). Click a candidate to hot-switch — the choice
   is persisted in the settings file and takes effect immediately.
 
-[SCREENSHOT: Dashboard version card expanded — candidate list with compatibility badges and the active marker]
+![Screenshot](docs/screenshots/dashboard-version-card.png)
 
 ---
 
@@ -160,7 +160,7 @@ and turns every dataflow into an editable, type-checked canvas.
   Nodes that exist only as standalone scripts can be registered manually
   with **+ Add node manually** (they are marked as `manual` in the UI).
 
-[SCREENSHOT: Explorer Source tab — project groups in the sidebar, add-project button, a dataflow open on the canvas]
+![Screenshot](docs/screenshots/explorer-source.png)
 
 ### Source tab: canvas editing
 
@@ -180,8 +180,8 @@ Clicking a dataflow opens it on the canvas (Canvas / Text sub-views):
 - Files that cannot be parsed fall back to a read-only text view with an
   honest note — the canvas never fakes content.
 
-[SCREENSHOT: Canvas with colored edges — one green, one red with tooltip, one yellow rule-based]
-[SCREENSHOT: Port types panel — URN picker grouped by category with search]
+![Screenshot](docs/screenshots/canvas-colored-edges.png)
+![Screenshot](docs/screenshots/port-types-panel.png)
 [SCREENSHOT: Type Rules panel and the edge property box with the "Declare type rule" button]
 
 ### Saving
@@ -196,7 +196,7 @@ Clicking a dataflow opens it on the canvas (Canvas / Text sub-views):
   nodes/edges on the canvas; warnings do not block and are shown as
   yellow highlights.
 
-[SCREENSHOT: Save status bar after a successful save; backup file visible in the backups directory]
+![Screenshot](docs/screenshots/save-success.png)
 
 ### Build tab
 
@@ -215,7 +215,7 @@ validate, and run.
   `out/recordings/<timestamp>.drec`. Stop the recording and open it in
   the Replay timeline from the recordings list.
 
-[SCREENSHOT: Run Monitor — session bar, dataflow table with Run/Stop, Record UI, recordings list with "Open in Replay"]
+![Screenshot](docs/screenshots/run-monitor.png)
 
 ---
 
@@ -224,7 +224,7 @@ validate, and run.
 Three-level log viewer (info / warning / error with distinct visuals)
 plus a raw stream, cross-referenced with the running dataflow.
 
-[SCREENSHOT: Logs page — the three log levels side by side or stacked, with a running dataflow]
+![Screenshot](docs/screenshots/logs-events.png)
 
 ---
 
@@ -234,7 +234,7 @@ plus a raw stream, cross-referenced with the running dataflow.
 orbit/pan/zoom, dviz and MoveIt status indicators, and replay overlay
 integration for recorded frame streams.
 
-[SCREENSHOT: Visualization 3D viewport — the nano robot model rendered in the scene]
+![Screenshot](docs/screenshots/visualization-3d.png)
 
 ---
 
@@ -244,7 +244,7 @@ A planning console view. In this version it is a read-only mirror of the
 planning state (the actual planning/execution runs on the MoveIt side);
 Plan/Execute controls are disabled and clearly labeled.
 
-[SCREENSHOT: Motion Planner — joint editor and planning status area]
+![Screenshot](docs/screenshots/motion-planner.png)
 
 ---
 
@@ -257,7 +257,7 @@ Plan/Execute controls are disabled and clearly labeled.
   gRPC on 4317) and rendered as flame graphs. Point `DORA_OTLP_ENDPOINT`
   at the Studio receiver to profile your nodes.
 
-[SCREENSHOT: Metrics panel with per-node rows and a flame graph of a traced run]
+![Screenshot](docs/screenshots/metrics-flamegraph.png)
 
 ---
 
@@ -267,7 +267,7 @@ Open a `.drec` recording, scrub the timeline, and watch the 3D viewport
 and attribution bar follow the recorded frames (frame-stream replay with
 an own offset index — no dora dependency for seeking).
 
-[SCREENSHOT: Replay timeline with the 3D viewport synced and the attribution bar visible]
+![Screenshot](docs/screenshots/replay-timeline.png)
 
 ---
 
@@ -449,16 +449,16 @@ running (the OTLP receiver tests bind ports 4317/4318).
 
 Place the screenshots at the bracketed markers above. Checklist:
 
-- [ ] Dashboard overview (session pill + version card + quick start)
-- [ ] Dashboard version card expanded (candidates + badges)
-- [ ] Explorer Source tab (project groups + canvas)
-- [ ] Canvas with colored edges (green/red/yellow + tooltip)
-- [ ] Port types panel (URN picker, category groups, search)
-- [ ] Type Rules panel + edge property "Declare type rule" button
-- [ ] Save status bar (successful write-back)
-- [ ] Run & Monitor (session bar, Run/Stop, Record UI, recordings list)
-- [ ] Logs & Events (three log levels)
-- [ ] Visualization 3D viewport (nano robot)
-- [ ] Motion Planner (joint editor, read-only status)
-- [ ] Metrics panel + OTel flame graph
-- [ ] Replay timeline (timeline + synced 3D viewport + attribution bar)
+- [ ] Dashboard overview (session pill + version card + quick start) — **pending**
+- [x] Dashboard version card expanded (candidates + badges)
+- [x] Explorer Source tab (project groups + canvas)
+- [x] Canvas with colored edges (green/red/yellow + tooltip)
+- [x] Port types panel (URN picker, category groups, search)
+- [ ] Type Rules panel + edge property "Declare type rule" button — **pending**
+- [x] Save status bar (successful write-back)
+- [x] Run & Monitor (session bar, Run/Stop, Record UI, recordings list)
+- [x] Logs & Events (three log levels)
+- [x] Visualization 3D viewport (nano robot)
+- [x] Motion Planner (joint editor, read-only status)
+- [x] Metrics panel + OTel flame graph
+- [x] Replay timeline (timeline + synced 3D viewport + attribution bar)
